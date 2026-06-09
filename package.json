@@ -1,0 +1,21 @@
+{
+  "type": "module",
+  "scripts": {
+    "api": "node server/ollamaAssistantServer.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "ranker:export": "node pytorch_route_ranker/scripts/export_route_registry.mjs",
+    "ranker:generate": "python3 -m pytorch_route_ranker.scripts.generate_training_data",
+    "ranker:train": "python3 -m pytorch_route_ranker.scripts.train",
+    "ranker:evaluate": "python3 -m pytorch_route_ranker.scripts.evaluate",
+    "ranker:api": "python3 -m uvicorn pytorch_route_ranker.app.main:app --host 127.0.0.1 --port 8001"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {}
+}

@@ -146,6 +146,59 @@ never used for training and run:
 python -m pytorch_route_ranker.scripts.evaluate --data path/to/held_out_test.jsonl
 ```
 
+## Automated Reproducible Experiments
+
+Use the experiment runner instead of manually creating folders for every
+training attempt:
+
+```bash
+npm run ranker:experiment -- \
+  --run-name radar-keyword-update \
+  --notes "Added radar synonyms and clarified composite descriptions" \
+  --held-out-test pytorch_route_ranker/data/held_out_test.jsonl
+```
+
+Windows PowerShell uses the same command on one line:
+
+```powershell
+npm run ranker:experiment -- --run-name radar-keyword-update --notes "Added radar synonyms" --held-out-test pytorch_route_ranker\data\held_out_test.jsonl
+```
+
+The command automatically:
+
+1. exports the current approved registry;
+2. regenerates synthetic training examples;
+3. creates a timestamped immutable run folder;
+4. snapshots training data, held-out test data, and model source code;
+5. records Python, Node, Git, registry, and training configuration;
+6. trains a new model inside the run folder;
+7. evaluates that exact model against the snapshotted held-out test;
+8. stores all logs and appends metrics to `pytorch_route_ranker/runs/summary.csv`.
+
+Each completed run resembles:
+
+```text
+pytorch_route_ranker/runs/20260610-143000-radar-keyword-update/
+  configuration.json
+  notes.txt
+  model.pt
+  training-log.txt
+  evaluation-log.txt
+  data/
+  source/
+```
+
+Run folders are ignored by Git because they may contain large models and
+confidential registry snapshots. Back them up using an approved internal
+location. The runner never automatically promotes a model to
+`pytorch_route_ranker/models/route_ranker.pt`; compare `summary.csv` and review
+mismatches before promotion.
+
+All npm ranker commands use `scripts/runPythonModule.mjs` to find `py -3.11`,
+`python`, or `python3`, making the same commands usable on Windows and macOS.
+Set `AMIDS_PYTHON_COMMAND` if the workplace Python executable uses another
+name.
+
 ## 5. Start The Ranker And Gateway
 
 Terminal 1:

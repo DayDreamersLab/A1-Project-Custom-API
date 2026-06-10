@@ -89,6 +89,30 @@ Each line has this shape:
 {"query":"show all runway wind data","scope":"multiple","relevantRouteIds":["wind-overview","wind-current-observations"],"source":"expert-reviewed"}
 ```
 
+Real AMIDS route IDs do not need to follow the prototype's suffix convention.
+For example, `radar-satellite-composite` is valid. The generator always creates
+single-route examples from the route title and keywords. It creates synthetic
+purpose-wide examples only when route metadata confidently matches a known
+shared purpose.
+
+Place the route's most useful broad grouping term first in `keywords`. For
+example:
+
+```json
+{
+  "id": "radar-satellite-composite",
+  "title": "Radar Satellite Composite",
+  "path": "https://internal-amids.example/radar-composite",
+  "description": "Combined radar and satellite imagery.",
+  "keywords": ["radar", "satellite", "composite imagery"]
+}
+```
+
+Here, generated broad queries such as `show all radar data` can group it with
+other routes whose first keyword is also `radar`. Review broad generated groups
+carefully and describe operationally important groupings explicitly in
+`expert_training_examples.jsonl`.
+
 Use the exact routes an aviation expert expects. Add difficult phrases,
 paraphrases, abbreviations, exclusions, and examples where similar wording
 should produce different results. Do not train automatically from a merely

@@ -1,6 +1,7 @@
 from collections import Counter, defaultdict
 from pathlib import Path
 import json
+import re
 
 from pytorch_route_ranker.app.config import RANKER_ROOT
 from pytorch_route_ranker.app.registry import load_registry
@@ -29,11 +30,39 @@ PURPOSE_LABELS = {
 }
 
 
-def route_purpose(route_id: str) -> str:
+def normalize_label(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(value).lower()))
+
+
+def route_topic(route: dict) -> str:
+    for keyword in route["keywords"]:
+        normalized_keyword = normalize_label(keyword)
+        if normalized_keyword:
+            return normalized_keyword
+
+    return normalize_label(route["title"]) or normalize_label(route["id"])
+
+
+def route_purpose(route: dict) -> str | None:
+    route_id = str(route["id"]).lower()
     for purpose in sorted(PURPOSE_LABELS, key=len, reverse=True):
         if route_id.endswith(f"-{purpose}"):
             return purpose
-    raise ValueError(f"Could not determine purpose for route {route_id}")
+
+    searchable_metadata = normalize_label(
+        " ".join(
+            [
+                route["title"],
+                route["description"],
+                *route["keywords"],
+            ]
+        )
+    )
+    for purpose, labels in PURPOSE_LABELS.items():
+        if any(normalize_label(label) in searchable_metadata for label in labels):
+            return purpose
+
+    return None
 
 
 def write_example(output_file, query: str, scope: str, route_ids: list[str], source: str) -> None:
@@ -62,27 +91,37 @@ def main() -> None:
     )
 
     for route in routes:
-        topic = str(route["keywords"][0]).lower()
+        topic = route_topic(route)
         routes_by_topic[topic].append(route)
-        routes_by_purpose[route_purpose(route["id"])].append(route)
+        purpose = route_purpose(route)
+        if purpose:
+            routes_by_purpose[purpose].append(route)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_PATH.open("w", encoding="utf-8") as output_file:
         for route in routes:
-            topic = str(route["keywords"][0]).lower()
-            purpose = route_purpose(route["id"])
-            purpose_label = PURPOSE_LABELS[purpose][0]
+            topic = route_topic(route)
+            purpose = route_purpose(route)
             queries = {
                 f"open {route['title']}",
                 f"show me {route['title']}",
                 f"navigate to {route['title']}",
-                f"I need {topic} {purpose_label}",
-                f"give me {topic} {purpose_label} data",
+                f"I need {topic}",
+                f"give me {topic} data",
             }
+            if purpose:
+                purpose_label = PURPOSE_LABELS[purpose][0]
+                queries.update(
+                    {
+                        f"I need {topic} {purpose_label}",
+                        f"give me {topic} {purpose_label} data",
+                    }
+                )
             unique_keywords = [
-                str(keyword).lower()
+                normalize_label(keyword)
                 for keyword in route["keywords"]
-                if keyword_counts[str(keyword).lower()] <= 2
+                if normalize_label(keyword)
+                and keyword_counts[str(keyword).lower()] <= 2
             ][:2]
             queries.update(f"find {keyword}" for keyword in unique_keywords)
 
@@ -90,6 +129,8 @@ def main() -> None:
                 write_example(output_file, query, "single", [route["id"]], "generated-route")
 
         for topic, topic_routes in routes_by_topic.items():
+            if len(topic_routes) < 2:
+                continue
             route_ids = [route["id"] for route in topic_routes]
             for query in [
                 f"show all {topic} data",
@@ -100,6 +141,8 @@ def main() -> None:
                 write_example(output_file, query, "multiple", route_ids, "generated-topic")
 
         for purpose, purpose_routes in routes_by_purpose.items():
+            if len(purpose_routes) < 2:
+                continue
             route_ids = [route["id"] for route in purpose_routes]
             for purpose_label in PURPOSE_LABELS[purpose]:
                 for query in [

@@ -6,10 +6,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "ranker:export": "node pytorch_route_ranker/scripts/export_route_registry.mjs",
-    "ranker:generate": "python3 -m pytorch_route_ranker.scripts.generate_training_data",
-    "ranker:train": "python3 -m pytorch_route_ranker.scripts.train",
-    "ranker:evaluate": "python3 -m pytorch_route_ranker.scripts.evaluate",
-    "ranker:api": "python3 -m uvicorn pytorch_route_ranker.app.main:app --host 127.0.0.1 --port 8001"
+    "ranker:generate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.generate_training_data",
+    "ranker:train": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.train",
+    "ranker:evaluate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.evaluate",
+    "ranker:experiment": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.run_experiment",
+    "ranker:api": "node scripts/runPythonModule.mjs uvicorn pytorch_route_ranker.app.main:app --host 127.0.0.1 --port 8001"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

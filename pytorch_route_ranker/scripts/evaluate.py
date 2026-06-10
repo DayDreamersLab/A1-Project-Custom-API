@@ -1,4 +1,17 @@
+from argparse import ArgumentParser
+from pathlib import Path
+import json
+import time
 
+from pytorch_route_ranker.app.config import RANKER_ROOT, Settings
+from pytorch_route_ranker.app.schemas import RankRequest
+from pytorch_route_ranker.app.service import RoutingService
+
+
+def parse_args():
+    parser = ArgumentParser(description="Evaluate the trained AMIDS route ranker.")
+    parser.add_argument(
+        "--data",
         type=Path,
         default=RANKER_ROOT / "data" / "expert_training_examples.jsonl",
     )
@@ -57,11 +70,6 @@ def load_test_examples(data_path: Path, valid_route_ids: set[str]) -> list[dict]
 def main() -> None:
     args = parse_args()
     service = RoutingService(Settings())
-    examples = [
-        json.loads(line)
-        for line in args.data.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
     examples = load_test_examples(args.data, set(service.routes_by_id))
 
     correct_scope = 0
@@ -103,6 +111,8 @@ def main() -> None:
 
     example_count = max(1, len(examples))
     print(f"examples={len(examples)} model={service.model_version}")
+    print(f"scopeAccuracy={correct_scope / example_count:.3f}")
+    print(f"topRouteAccuracy={correct_top_route / example_count:.3f}")
     print(f"relevantRouteRecall={relevant_routes_found / max(1, relevant_routes_total):.3f}")
     print(f"fallbackRate={fallback_count / example_count:.3f}")
     print(f"averageLatencyMs={sum(durations) / example_count:.2f}")

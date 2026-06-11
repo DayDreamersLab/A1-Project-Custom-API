@@ -94,6 +94,14 @@ const assistantResponseCache = new Map();
 const assistantInFlightRequests = new Map();
 // Serializes feedback updates to prevent concurrent duplicate scoring.
 let feedbackProcessingQueue = Promise.resolve();
+// Sets the deliberately small personalization adjustment from one clarification choice.
+const selectionRouteDelta = 0.5;
+// Sets the deliberately small topic adjustment from one clarification choice.
+const selectionTopicDelta = 0.25;
+// Bounds learned route preference scores so behavior cannot drift without limit.
+const maximumRoutePreferenceScore = 6;
+// Bounds learned topic preference scores so repeated choices cannot dominate routing.
+const maximumTopicPreferenceScore = 12;
 // Creates a registry fingerprint used when building cache keys.
 const routeRegistryVersion = createHash("sha256")
   // Adds normalized data to the hash input.
@@ -255,6 +263,12 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+// Restricts a numeric value to an inclusive range.
+function clamp(value, minimum, maximum) {
+  // Returns the bounded numeric value.
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
 // Returns only route fields safe for the frontend.
 function toPublicRoute(route) {
   // Returns a structured result object.
@@ -301,6 +315,8 @@ function createEmptyStore() {
     profiles: {},
     // Sets this property in the current object.
     feedback: [],
+    // Stores explicit choices made from uncertain route suggestions.
+    selectionEvidence: [],
   };
 }
 
@@ -335,6 +351,8 @@ function createDefaultProfile(userId, roleKey) {
     recentQueries: [],
     // Sets this property in the current object.
     feedbackCount: 0,
+    // Counts bounded evidence gathered from clarification choices.
+    selectionEvidenceCount: 0,
     // Sets this property in the current object.
     createdAt: timestamp,
     // Sets this property in the current object.
@@ -361,6 +379,8 @@ async function readPersonalizationStore() {
       profiles: parsedStore.profiles ?? {},
       // Sets this property in the current object.
       feedback: parsedStore.feedback ?? [],
+      // Sets this property in the current object.
+      selectionEvidence: parsedStore.selectionEvidence ?? [],
     };
   // Handles an error from the preceding operation.
   } catch {
@@ -388,6 +408,13 @@ function ensureProfile(store, userId = defaultUserId, roleKey = "unknown-role") 
     // Assigns the computed value for the current operation.
     store.profiles[key] = createDefaultProfile(userId, roleKey);
   }
+
+  // Restores fields introduced after an older profile was first created.
+  store.profiles[key].routeScores ??= {};
+  store.profiles[key].topicScores ??= {};
+  store.profiles[key].recentQueries ??= [];
+  store.profiles[key].feedbackCount ??= 0;
+  store.profiles[key].selectionEvidenceCount ??= 0;
 
   // Returns the computed result to the caller.
   return store.profiles[key];
@@ -572,14 +599,22 @@ async function processFeedbackTransaction(payload) {
   routeIds.forEach((routeId, index) => {
     // Selects the score adjustment for the current route.
     const delta = index === 0 ? routeDelta : secondaryRouteDelta;
-    // Assigns the computed value for the current operation.
-    profile.routeScores[routeId] = (profile.routeScores[routeId] ?? 0) + delta;
+    // Applies the explicit feedback while keeping the learned preference bounded.
+    profile.routeScores[routeId] = clamp(
+      (profile.routeScores[routeId] ?? 0) + delta,
+      -maximumRoutePreferenceScore,
+      maximumRoutePreferenceScore
+    );
   });
 
   // Processes each entry in the current list.
   inferFeedbackTopics(payload.query, routeIds).forEach((topic) => {
-    // Assigns the computed value for the current operation.
-    profile.topicScores[topic] = (profile.topicScores[topic] ?? 0) + 1;
+    // Applies the topic signal while keeping the learned preference bounded.
+    profile.topicScores[topic] = clamp(
+      (profile.topicScores[topic] ?? 0) + 1,
+      0,
+      maximumTopicPreferenceScore
+    );
   });
 
   // Assigns the computed value for the current operation.
@@ -664,6 +699,148 @@ function processFeedback(payload) {
   // Assigns the computed value for the current operation.
   feedbackProcessingQueue = operation.catch(() => undefined);
   // Returns the computed result to the caller.
+  return operation;
+}
+
+// Applies one small, deduplicated personalization signal from an uncertain suggestion choice.
+async function processSelectionEvidenceTransaction(payload) {
+  // Loads the current personalization store.
+  const store = await readPersonalizationStore();
+  // Captures the current time in ISO format.
+  const timestamp = new Date().toISOString();
+  // Uses the supplied user ID or the prototype fallback ID.
+  const userId = payload.userId || defaultUserId;
+  // Uses the supplied role key or an unknown-role fallback.
+  const roleKey = payload.roleKey || "unknown-role";
+  // Reads the route the user explicitly chose.
+  const selectedRouteId = payload.selectedRouteId;
+  // Rejects missing or unapproved route IDs.
+  if (!selectedRouteId || !routeRegistry.some((route) => route.id === selectedRouteId)) {
+    throw new Error("Selection evidence must reference one approved routeRegistry ID.");
+  }
+
+  // Keeps only approved routes that were actually offered in the clarification.
+  const suggestedRouteIds = unique(payload.suggestedRouteIds ?? []).filter((routeId) =>
+    routeRegistry.some((route) => route.id === routeId)
+  );
+  // Rejects choices that were not part of the shown suggestion set.
+  if (!suggestedRouteIds.includes(selectedRouteId)) {
+    throw new Error("The selected route was not part of the approved clarification suggestions.");
+  }
+
+  // Recomputes the stable suggestion-set identity instead of trusting a client-generated ID.
+  const recommendationId = createRecommendationId(payload, suggestedRouteIds);
+  // Rejects evidence when the supplied recommendation identity does not match its contents.
+  if (payload.recommendationId && payload.recommendationId !== recommendationId) {
+    throw new Error("Selection evidence did not match the original clarification recommendation.");
+  }
+  // Gets or creates the personalization profile for this user and role.
+  const profile = ensureProfile(store, userId, roleKey);
+  // Finds an earlier choice from the same clarification result.
+  const existingEvidence = (store.selectionEvidence ?? []).find(
+    (record) =>
+      record.userId === userId &&
+      record.roleKey === roleKey &&
+      record.recommendationId === recommendationId
+  );
+
+  // Prevents repeated clicks or later route opens from adding further bias.
+  if (existingEvidence) {
+    return {
+      ok: true,
+      duplicate: true,
+      mode: "selection-evidence-duplicate",
+      selectionEvidenceRecord: existingEvidence,
+      profile,
+      profileDelta: null,
+    };
+  }
+
+  // Adds weak route evidence and bounds the accumulated preference score.
+  profile.routeScores[selectedRouteId] = clamp(
+    (profile.routeScores[selectedRouteId] ?? 0) + selectionRouteDelta,
+    -maximumRoutePreferenceScore,
+    maximumRoutePreferenceScore
+  );
+  // Infers only a small number of topics from the chosen route and query.
+  const topics = inferFeedbackTopics(payload.query, [selectedRouteId]).slice(0, 6);
+  // Adds weak topic evidence and bounds each accumulated topic score.
+  topics.forEach((topic) => {
+    profile.topicScores[topic] = clamp(
+      (profile.topicScores[topic] ?? 0) + selectionTopicDelta,
+      0,
+      maximumTopicPreferenceScore
+    );
+  });
+
+  // Adds the choice to the bounded recent-query history.
+  profile.recentQueries = [
+    {
+      query: payload.query,
+      evidenceType: "clarification-selection",
+      selectedRouteId,
+      suggestedRouteIds,
+      timestamp,
+    },
+    ...(profile.recentQueries ?? []),
+  ].slice(0, 12);
+  // Counts this deduplicated clarification choice.
+  profile.selectionEvidenceCount = (profile.selectionEvidenceCount ?? 0) + 1;
+  // Records when the profile last changed.
+  profile.updatedAt = timestamp;
+  // Rebuilds derived preferred-route and frequent-topic lists.
+  updateProfileLists(profile);
+
+  // Builds an auditable record of the bounded evidence.
+  const selectionEvidenceRecord = {
+    id: payload.id ?? randomUUID(),
+    userId,
+    roleKey,
+    recommendationId,
+    query: payload.query,
+    selectedRouteId,
+    suggestedRouteIds,
+    routeDelta: selectionRouteDelta,
+    topicDelta: selectionTopicDelta,
+    topics,
+    timestamp,
+  };
+
+  // Keeps a bounded audit history of clarification selections.
+  store.selectionEvidence = [
+    selectionEvidenceRecord,
+    ...(store.selectionEvidence ?? []),
+  ].slice(0, 250);
+  // Persists the updated profile and evidence record.
+  await writePersonalizationStore(store);
+  // Clears cached recommendations so the bounded evidence can affect later requests.
+  assistantResponseCache.clear();
+
+  // Returns the updated profile and exact bounded adjustment.
+  return {
+    ok: true,
+    duplicate: false,
+    mode: "selection-evidence-recorded",
+    selectionEvidenceRecord,
+    profile,
+    profileDelta: {
+      selectedRouteId,
+      routeDelta: selectionRouteDelta,
+      topics,
+      topicDelta: selectionTopicDelta,
+    },
+  };
+}
+
+// Queues clarification-selection evidence beside feedback updates.
+function processSelectionEvidence(payload) {
+  // Queues this update after earlier personalization operations.
+  const operation = feedbackProcessingQueue.then(() =>
+    processSelectionEvidenceTransaction(payload)
+  );
+  // Keeps the queue usable after an individual operation fails.
+  feedbackProcessingQueue = operation.catch(() => undefined);
+  // Returns the queued operation.
   return operation;
 }
 
@@ -1985,6 +2162,12 @@ const server = http.createServer(async (request, response) => {
         // Adds this value to the current structure.
         uncertainSuggestionLimit,
         // Adds this value to the current structure.
+        selectionRouteDelta,
+        // Adds this value to the current structure.
+        selectionTopicDelta,
+        // Adds this value to the current structure.
+        maximumRoutePreferenceScore,
+        // Adds this value to the current structure.
         assistantCacheTtlMs,
         // Adds this value to the current structure.
         assistantCacheMaxEntries,
@@ -2052,6 +2235,29 @@ const server = http.createServer(async (request, response) => {
     // Continues the current operation.
     return;
 
+  }
+
+  // Handles one explicit route choice from an uncertain clarification result.
+  if (request.method === "POST" && requestUrl.pathname === "/api/amids-assistant/selection") {
+    // Starts an operation that may fail.
+    try {
+      // Parses the incoming JSON selection-evidence payload.
+      const payload = await readBody(request);
+      // Applies one deduplicated and bounded personalization update.
+      const result = await processSelectionEvidence(payload);
+      // Sends the updated profile and audit record.
+      sendJson(response, 200, result);
+    // Handles invalid or failed selection-evidence processing.
+    } catch (error) {
+      // Sends a structured error response.
+      sendJson(response, 400, {
+        ok: false,
+        error: error.message,
+        mode: "selection-evidence-error",
+      });
+    }
+    // Stops after handling the selection endpoint.
+    return;
   }
 
   // Handles simulated routeRegistry destination pages.

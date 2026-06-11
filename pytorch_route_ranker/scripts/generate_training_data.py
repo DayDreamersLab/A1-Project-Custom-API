@@ -65,25 +65,45 @@ def route_purpose(route: dict) -> str | None:
     return None
 
 
-def write_example(output_file, query: str, scope: str, route_ids: list[str], source: str) -> None:
-    output_file.write(
-        json.dumps(
-            {
-                "query": query,
-                "scope": scope,
-                "relevantRouteIds": route_ids,
-                "source": source,
-            },
-            ensure_ascii=True,
-        )
-        + "\n"
+def add_example(
+    examples_by_query: dict[str, dict],
+    conflicting_queries: set[str],
+    query: str,
+    scope: str,
+    route_ids: list[str],
+    source: str,
+) -> None:
+    normalized_query = normalize_label(query)
+    normalized_route_ids = sorted(set(route_ids))
+    if not normalized_query or not normalized_route_ids or normalized_query in conflicting_queries:
+        return
+
+    example = {
+        "query": query.strip(),
+        "scope": scope,
+        "relevantRouteIds": normalized_route_ids,
+        "source": source,
+    }
+    existing_example = examples_by_query.get(normalized_query)
+    if not existing_example:
+        examples_by_query[normalized_query] = example
+        return
+
+    existing_label = (
+        existing_example["scope"],
+        tuple(existing_example["relevantRouteIds"]),
     )
+    new_label = (scope, tuple(normalized_route_ids))
+    if existing_label != new_label:
+        examples_by_query.pop(normalized_query)
+        conflicting_queries.add(normalized_query)
 
 
 def main() -> None:
     routes = load_registry(REGISTRY_PATH)
     routes_by_topic: dict[str, list[dict]] = defaultdict(list)
     routes_by_purpose: dict[str, list[dict]] = defaultdict(list)
+    routes_by_topic_and_purpose: dict[tuple[str, str], list[dict]] = defaultdict(list)
     keyword_counts = Counter(
         str(keyword).lower()
         for route in routes
@@ -96,64 +116,166 @@ def main() -> None:
         purpose = route_purpose(route)
         if purpose:
             routes_by_purpose[purpose].append(route)
+            routes_by_topic_and_purpose[(topic, purpose)].append(route)
+
+    examples_by_query: dict[str, dict] = {}
+    conflicting_queries: set[str] = set()
+
+    for route in routes:
+        topic = route_topic(route)
+        purpose = route_purpose(route)
+        title = route["title"].strip()
+        route_ids = [route["id"]]
+
+        command_queries = {
+            f"open {title}",
+            f"show me {title}",
+            f"navigate to {title}",
+            f"find {title}",
+        }
+        fragment_queries = {
+            title,
+            f"{title} please",
+            f"{title} information",
+            f"looking for {title}",
+            f"where is {title}",
+            f"where can I find {title}",
+        }
+
+        unique_keywords = [
+            normalize_label(keyword)
+            for keyword in route["keywords"]
+            if normalize_label(keyword)
+            and keyword_counts[str(keyword).lower()] <= 2
+        ][:3]
+        for keyword in unique_keywords:
+            fragment_queries.update(
+                {
+                    keyword,
+                    f"{keyword} please",
+                    f"{keyword} information",
+                    f"looking for {keyword}",
+                }
+            )
+
+        if purpose and len(routes_by_topic_and_purpose[(topic, purpose)]) == 1:
+            purpose_label = PURPOSE_LABELS[purpose][0]
+            fragment_queries.update(
+                {
+                    f"{topic} {purpose_label}",
+                    f"{topic} {purpose_label} please",
+                    f"where is the {topic} {purpose_label}",
+                }
+            )
+
+        for query in sorted(command_queries):
+            add_example(
+                examples_by_query,
+                conflicting_queries,
+                query,
+                "single",
+                route_ids,
+                "generated-route-command",
+            )
+        for query in sorted(fragment_queries):
+            add_example(
+                examples_by_query,
+                conflicting_queries,
+                query,
+                "single",
+                route_ids,
+                "generated-route-fragment",
+            )
+
+    for topic, topic_routes in routes_by_topic.items():
+        if len(topic_routes) < 2:
+            continue
+        route_ids = [route["id"] for route in topic_routes]
+        command_queries = {
+            f"show all {topic} data",
+            f"give me every {topic} source",
+            f"open the complete set of {topic} information",
+            f"I need everything related to {topic}",
+        }
+        fragment_queries = {
+            topic,
+            f"{topic} data",
+            f"{topic} information",
+            f"{topic} sources",
+            f"all {topic}",
+            f"all {topic} data",
+            f"every {topic} source",
+            f"complete {topic} information",
+            f"everything related to {topic}",
+            f"what {topic} information is available",
+        }
+        for query in sorted(command_queries):
+            add_example(
+                examples_by_query,
+                conflicting_queries,
+                query,
+                "multiple",
+                route_ids,
+                "generated-topic-command",
+            )
+        for query in sorted(fragment_queries):
+            add_example(
+                examples_by_query,
+                conflicting_queries,
+                query,
+                "multiple",
+                route_ids,
+                "generated-topic-fragment",
+            )
+
+    for purpose, purpose_routes in routes_by_purpose.items():
+        if len(purpose_routes) < 2:
+            continue
+        route_ids = [route["id"] for route in purpose_routes]
+        for purpose_label in PURPOSE_LABELS[purpose]:
+            command_queries = {
+                f"show all {purpose_label}",
+                f"open every {purpose_label} source",
+                f"give me complete {purpose_label} information",
+            }
+            fragment_queries = {
+                purpose_label,
+                f"{purpose_label} information",
+                f"{purpose_label} sources",
+                f"all {purpose_label}",
+                f"every {purpose_label} source",
+                f"complete {purpose_label} information",
+            }
+            for query in sorted(command_queries):
+                add_example(
+                    examples_by_query,
+                    conflicting_queries,
+                    query,
+                    "multiple",
+                    route_ids,
+                    "generated-purpose-command",
+                )
+            for query in sorted(fragment_queries):
+                add_example(
+                    examples_by_query,
+                    conflicting_queries,
+                    query,
+                    "multiple",
+                    route_ids,
+                    "generated-purpose-fragment",
+                )
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_PATH.open("w", encoding="utf-8") as output_file:
-        for route in routes:
-            topic = route_topic(route)
-            purpose = route_purpose(route)
-            queries = {
-                f"open {route['title']}",
-                f"show me {route['title']}",
-                f"navigate to {route['title']}",
-                f"I need {topic}",
-                f"give me {topic} data",
-            }
-            if purpose:
-                purpose_label = PURPOSE_LABELS[purpose][0]
-                queries.update(
-                    {
-                        f"I need {topic} {purpose_label}",
-                        f"give me {topic} {purpose_label} data",
-                    }
-                )
-            unique_keywords = [
-                normalize_label(keyword)
-                for keyword in route["keywords"]
-                if normalize_label(keyword)
-                and keyword_counts[str(keyword).lower()] <= 2
-            ][:2]
-            queries.update(f"find {keyword}" for keyword in unique_keywords)
+        for normalized_query in sorted(examples_by_query):
+            output_file.write(
+                json.dumps(examples_by_query[normalized_query], ensure_ascii=True) + "\n"
+            )
 
-            for query in sorted(queries):
-                write_example(output_file, query, "single", [route["id"]], "generated-route")
-
-        for topic, topic_routes in routes_by_topic.items():
-            if len(topic_routes) < 2:
-                continue
-            route_ids = [route["id"] for route in topic_routes]
-            for query in [
-                f"show all {topic} data",
-                f"give me every {topic} source",
-                f"open the complete set of {topic} information",
-                f"I need everything related to {topic}",
-            ]:
-                write_example(output_file, query, "multiple", route_ids, "generated-topic")
-
-        for purpose, purpose_routes in routes_by_purpose.items():
-            if len(purpose_routes) < 2:
-                continue
-            route_ids = [route["id"] for route in purpose_routes]
-            for purpose_label in PURPOSE_LABELS[purpose]:
-                for query in [
-                    f"show all {purpose_label}",
-                    f"open every {purpose_label} source",
-                    f"give me complete {purpose_label} information",
-                ]:
-                    write_example(output_file, query, "multiple", route_ids, "generated-purpose")
-
-    line_count = sum(1 for _ in OUTPUT_PATH.open("r", encoding="utf-8"))
-    print(f"Generated {line_count} training examples at {OUTPUT_PATH}")
+    print(
+        f"Generated {len(examples_by_query)} training examples at {OUTPUT_PATH}; "
+        f"removed {len(conflicting_queries)} conflicting queries."
+    )
 
 
 if __name__ == "__main__":

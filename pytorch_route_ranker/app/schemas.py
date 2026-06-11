@@ -35,6 +35,14 @@ class RankResponse(BaseModel):
     confidence: float
     scopeProbability: float
     needsFallback: bool
+    fallbackReasons: list[
+        Literal[
+            "low-confidence",
+            "no-route-selected",
+            "insufficient-multiple-routes",
+            "uncertain-request-scope",
+        ]
+    ]
     explanation: str
     modelVersion: str
     registryFingerprint: str

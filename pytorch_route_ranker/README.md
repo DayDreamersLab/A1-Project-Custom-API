@@ -21,7 +21,6 @@ React UI
      -> Node validates IDs against routeRegistry
      -> hybrid mode sends uncertain requests to Qwen
 ```
-
 The ranker uses hashed word/character n-gram features and a small neural
 pair-ranking network. This makes it trainable, CPU-friendly, and independent of
 internet model downloads. Accuracy comes from the quality and coverage of its
@@ -76,6 +75,30 @@ and route purposes:
 ```bash
 npm run ranker:generate
 ```
+
+The generator deliberately creates several language styles:
+
+```text
+Command:   open Radar Satellite Composite
+Fragment:  Radar Satellite Composite
+Polite:    Radar Satellite Composite please
+Search:    looking for Radar Satellite Composite
+Question:  where can I find Radar Satellite Composite
+Broad:     radar data
+Broad:     everything related to radar
+```
+
+Bare shared topics such as `radar` are labelled as multiple-route requests,
+while bare route titles and sufficiently distinguishing keywords are labelled
+as single-route requests. The generator removes a query entirely if two
+generation rules assign it contradictory expected answers.
+
+Generated examples include a `source` value such as
+`generated-route-fragment` or `generated-topic-command`. These labels make it
+possible to audit whether the dataset is overly dominated by one language
+style. Do not automatically generate misspellings or highly ambiguous natural
+requests; add those only when their intended routes can be labelled
+confidently.
 
 Add expert-reviewed cases to:
 

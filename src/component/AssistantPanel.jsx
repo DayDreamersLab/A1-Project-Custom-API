@@ -132,6 +132,16 @@ export default function AssistantPanel({
         expertRules,
       });
 
+      const returnedRecommendationKey = getRecommendationKey(
+        assistantResult,
+        trimmedQuery,
+        roleKey
+      );
+      setSelectionDecisions((currentDecisions) => {
+        const nextDecisions = new Map(currentDecisions);
+        nextDecisions.delete(returnedRecommendationKey);
+        return nextDecisions;
+      });
       setResult(assistantResult);
       onAssistantResult(assistantResult);
 

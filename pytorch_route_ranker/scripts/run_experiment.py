@@ -37,6 +37,9 @@ SUMMARY_FIELDS = [
     "relevantRouteRecall",
     "fallbackRate",
     "averageLatencyMs",
+    "multipleRouteExactSetAccuracy",
+    "multipleRouteRecall",
+    "eligibleForPromotion",
 ]
 METRIC_PATTERN = re.compile(
     r"^(examples|scopeAccuracy|topRouteAccuracy|relevantRouteRecall|fallbackRate|"
@@ -64,6 +67,12 @@ def parse_args():
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--show-mismatches", type=int, default=20)
+    parser.add_argument(
+        "--active-model",
+        type=Path,
+        default=RANKER_ROOT / "models" / "route_ranker.pt",
+        help="Active checkpoint used for automatic candidate comparison.",
+    )
     parser.add_argument(
         "--skip-export",
         action="store_true",
@@ -174,8 +183,10 @@ def snapshot_source(source_directory: Path) -> None:
     scripts_destination = source_directory / "scripts"
     scripts_destination.mkdir()
     for script_name in [
+        "compare_models.py",
         "evaluate.py",
         "generate_training_data.py",
+        "manage_model.py",
         "run_experiment.py",
         "train.py",
     ]:
@@ -197,7 +208,22 @@ def write_json(path: Path, payload: dict) -> None:
 
 def append_summary(summary_row: dict[str, object]) -> None:
     summary_path = RUNS_ROOT / "summary.csv"
-    write_header = not summary_path.exists()
+    existing_rows: list[dict[str, str]] = []
+    if summary_path.exists():
+        with summary_path.open("r", newline="", encoding="utf-8") as summary_file:
+            reader = csv.DictReader(summary_file)
+            existing_rows = list(reader)
+            existing_fields = reader.fieldnames or []
+        if existing_fields != SUMMARY_FIELDS:
+            with summary_path.open("w", newline="", encoding="utf-8") as summary_file:
+                writer = csv.DictWriter(summary_file, fieldnames=SUMMARY_FIELDS)
+                writer.writeheader()
+                for existing_row in existing_rows:
+                    writer.writerow(
+                        {field: existing_row.get(field, "") for field in SUMMARY_FIELDS}
+                    )
+
+    write_header = not summary_path.exists() or summary_path.stat().st_size == 0
     with summary_path.open("a", newline="", encoding="utf-8") as summary_file:
         writer = csv.DictWriter(summary_file, fieldnames=SUMMARY_FIELDS)
         if write_header:
@@ -319,6 +345,7 @@ def main() -> None:
         evaluation_env["AMIDS_RANKER_CHECKPOINT_PATH"] = str(model_path)
         evaluation_env["AMIDS_RANKER_REGISTRY_PATH"] = str(snapshot_registry)
         evaluation_env["AMIDS_RANKER_FEATURE_DIMENSION"] = str(args.feature_dimension)
+        evaluation_results_path = run_directory / "evaluation-results.json"
         evaluation_output = run_and_tee(
             [
                 sys.executable,
@@ -328,11 +355,64 @@ def main() -> None:
                 str(snapshot_test),
                 "--show-mismatches",
                 str(args.show_mismatches),
+                "--output",
+                str(evaluation_results_path),
             ],
             run_directory / "evaluation-log.txt",
             env=evaluation_env,
         )
         metrics = parse_metrics(evaluation_output)
+        evaluation_results = json.loads(evaluation_results_path.read_text(encoding="utf-8"))
+        metrics["multipleRouteExactSetAccuracy"] = str(
+            evaluation_results["multipleRoute"]["exactSetAccuracy"]
+        )
+        metrics["multipleRouteRecall"] = str(
+            evaluation_results["multipleRoute"]["relevantRouteRecall"]
+        )
+
+        active_model = args.active_model.resolve()
+        comparison_path = run_directory / "comparison.json"
+        if active_model.exists():
+            try:
+                run_and_tee(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pytorch_route_ranker.scripts.compare_models",
+                        "--current",
+                        str(active_model),
+                        "--candidate",
+                        str(model_path),
+                        "--data",
+                        str(snapshot_test),
+                        "--registry",
+                        str(snapshot_registry),
+                        "--output",
+                        str(comparison_path),
+                    ],
+                    run_directory / "comparison-log.txt",
+                )
+                comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+                configuration["comparison"] = {
+                    "status": "complete",
+                    "eligibleForPromotion": comparison["eligibleForPromotion"],
+                    "failedChecks": comparison["failedChecks"],
+                }
+                metrics["eligibleForPromotion"] = str(comparison["eligibleForPromotion"]).lower()
+            except Exception as comparison_error:
+                configuration["comparison"] = {
+                    "status": "failed",
+                    "error": str(comparison_error),
+                    "eligibleForPromotion": False,
+                }
+                metrics["eligibleForPromotion"] = "false"
+        else:
+            configuration["comparison"] = {
+                "status": "not-run",
+                "reason": "No active model exists yet.",
+                "eligibleForPromotion": None,
+            }
+            metrics["eligibleForPromotion"] = ""
         status = "complete"
     except Exception as error:
         configuration["error"] = str(error)

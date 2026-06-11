@@ -1564,6 +1564,8 @@ async function askPytorchRanker(payload, metadata) {
 async function askOllama(payload, candidateRoutes, metadata) {
   // Detects an explicit user instruction to return all or every related route.
   const explicitMultipleRoutes = queryRequestsAllRelated(payload.query);
+  // Lists the only route IDs Qwen may return.
+  const allowedRouteIds = candidateRoutes.map((route) => route.id);
   // Defines the structured JSON response Ollama must return.
   const schema = {
     // Sets this property in the current object.
@@ -1581,23 +1583,14 @@ async function askOllama(payload, candidateRoutes, metadata) {
         // Forces multiple scope when the user explicitly asks for all/every data.
         enum: explicitMultipleRoutes ? ["multiple"] : ["single", "multiple"],
       },
-      // Sets this property in the current object.
-      explanation: { type: "string" },
-      // Sets this property in the current object.
-      appliedRules: {
-        // Sets this property in the current object.
-        type: "array",
-        // Sets this property in the current object.
-        items: { type: "string" },
-      },
-      // Sets this property in the current object.
-      routeId: { type: ["string", "null"] },
+      // Restricts the primary selection to approved candidate IDs or null.
+      routeId: { enum: [...allowedRouteIds, null] },
       // Sets this property in the current object.
       routeIds: {
         // Sets this property in the current object.
         type: "array",
-        // Sets this property in the current object.
-        items: { type: "string" },
+        // Restricts every multiple-route selection to approved candidate IDs.
+        items: { type: "string", enum: allowedRouteIds },
         // Requires more than one route for an explicit all/every request.
         minItems: explicitMultipleRoutes ? Math.min(2, candidateRoutes.length) : 0,
         // Sets this property in the current object.
@@ -1610,10 +1603,6 @@ async function askOllama(payload, candidateRoutes, metadata) {
       "shouldOpen",
       // Adds an instruction or value to the current structure.
       "requestScope",
-      // Adds an instruction or value to the current structure.
-      "explanation",
-      // Adds an instruction or value to the current structure.
-      "appliedRules",
       // Adds an instruction or value to the current structure.
       "routeId",
       // Adds an instruction or value to the current structure.
@@ -1691,9 +1680,7 @@ async function askOllama(payload, candidateRoutes, metadata) {
             // Adds an instruction or value to the current structure.
             "If the user only asks for information, choose the best route but set shouldOpen to false.",
             // Adds an instruction or value to the current structure.
-            "Keep the explanation under 20 words.",
-            // Adds an instruction or value to the current structure.
-            "Return JSON only and follow the schema exactly.",
+            "Return only shouldOpen, requestScope, routeId, and routeIds as JSON following the schema exactly.",
           // Adds this value to the current structure.
           ].join(" "),
         },
@@ -1720,7 +1707,7 @@ async function askOllama(payload, candidateRoutes, metadata) {
             // Adds this value to the current structure.
             ),
             // Sets this property in the current object.
-            allowedRouteIds: candidateRoutes.map((route) => route.id),
+            allowedRouteIds,
           // Adds this value to the current structure.
           }),
         },
@@ -1732,14 +1719,38 @@ async function askOllama(payload, candidateRoutes, metadata) {
 
   // Rejects an unsuccessful Ollama HTTP response.
   if (!response.ok) {
+    // Reads Ollama's response body so model, schema, and endpoint failures are diagnosable.
+    const errorBody = String(await response.text()).replace(/\s+/g, " ").slice(0, 300);
     // Stops processing with a descriptive error.
-    throw new Error(`Ollama request failed with status ${response.status}`);
+    throw new Error(
+      `Ollama request failed with status ${response.status}${
+        errorBody ? `: ${errorBody}` : ""
+      }`
+    );
   }
 
   // Parses the JSON response returned by Ollama.
   const data = await response.json();
+  // Rejects empty model responses with useful completion diagnostics.
+  if (!data.message?.content) {
+    throw new Error(
+      `Ollama returned no route-selection content${
+        data.done_reason ? `; done_reason=${data.done_reason}` : ""
+      }.`
+    );
+  }
   // Extracts the model's structured route-selection result.
   const rawResult = extractJson(data.message?.content ?? "");
+  // Rejects JSON values that do not contain the required routing fields.
+  if (
+    !rawResult ||
+    typeof rawResult !== "object" ||
+    typeof rawResult.shouldOpen !== "boolean" ||
+    !["single", "multiple"].includes(rawResult.requestScope) ||
+    !Array.isArray(rawResult.routeIds)
+  ) {
+    throw new Error("Ollama returned JSON without the required route-selection fields.");
+  }
   // Returns the computed result to the caller.
   return sanitizeResult(rawResult, payload, candidateRoutes, {
     // Spreads these values into the current structure.

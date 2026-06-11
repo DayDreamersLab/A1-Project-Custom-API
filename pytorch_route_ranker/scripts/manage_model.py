@@ -74,6 +74,8 @@ def checkpoint_metadata(path: Path) -> dict:
         "featureDimension": int(checkpoint["feature_dimension"]),
         "hiddenDimension": int(checkpoint["hidden_dimension"]),
         "trainingExampleCount": int(checkpoint.get("training_example_count", 0)),
+        "trainingDevice": str(checkpoint.get("training_device", "unknown")),
+        "torchVersion": str(checkpoint.get("torch_version", "unknown")),
     }
 
 

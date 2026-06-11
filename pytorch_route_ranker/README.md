@@ -297,13 +297,29 @@ the selected IDs from its own approved registry.
 
 
 $body = @{
-    query = "What is the current ATIS?"
-    maxRoutes = 8
-} | ConvertTo-Json
+  model = "qwen3:0.6b"
+  stream = $false
+  think = $false
+  format = @{
+    type = "object"
+    properties = @{
+      routeId = @{
+        enum = @("current-atis", $null)
+      }
+    }
+    required = @("routeId")
+  }
+  messages = @(
+    @{
+      role = "user"
+      content = "Return current-atis"
+    }
+  )
+} | ConvertTo-Json -Depth 10
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://127.0.0.1:8001/rank" `
+  -Uri "http://127.0.0.1:11434/api/chat" `
   -ContentType "application/json" `
   -Body $body |
   ConvertTo-Json -Depth 10

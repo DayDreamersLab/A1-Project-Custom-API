@@ -6,6 +6,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "ranker:export": "node pytorch_route_ranker/scripts/export_route_registry.mjs",
+    "ranker:export-evidence": "node pytorch_route_ranker/scripts/export_interaction_evidence.mjs",
     "ranker:generate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.generate_training_data",
     "ranker:train": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.train",
     "ranker:evaluate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.evaluate",

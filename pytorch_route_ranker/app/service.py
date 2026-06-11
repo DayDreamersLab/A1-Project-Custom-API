@@ -149,12 +149,27 @@ class RoutingService:
             scope_constraint is None
             and abs(scope_probability - self.settings.scope_threshold) < 0.12
         )
-        needs_fallback = (
-            confidence < self.settings.minimum_confidence
-            or not selected_routes
-            or (wants_multiple and len(selected_routes) < 2)
-            or scope_is_uncertain
-        )
+        fallback_reasons = []
+        if confidence < self.settings.minimum_confidence:
+            fallback_reasons.append("low-confidence")
+        if not selected_routes:
+            fallback_reasons.append("no-route-selected")
+        if wants_multiple and len(selected_routes) < 2:
+            fallback_reasons.append("insufficient-multiple-routes")
+        if scope_is_uncertain:
+            fallback_reasons.append("uncertain-request-scope")
+        needs_fallback = bool(fallback_reasons)
+        if fallback_reasons:
+            explanation = (
+                "PyTorch ranker could not confirm the route because "
+                + ", ".join(fallback_reasons)
+                + "."
+            )
+        else:
+            explanation = (
+                f"PyTorch ranker selected {len(selected_routes)} approved route"
+                f"{'s' if len(selected_routes) != 1 else ''} with {confidence:.0%} confidence."
+            )
         request_scope = "multiple" if wants_multiple else "single"
         route_ids = [route["id"] for route in selected_routes]
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
@@ -177,10 +192,8 @@ class RoutingService:
             confidence=round(confidence, 6),
             scopeProbability=round(scope_probability, 6),
             needsFallback=needs_fallback,
-            explanation=(
-                f"PyTorch ranker selected {len(selected_routes)} approved route"
-                f"{'s' if len(selected_routes) != 1 else ''} with {confidence:.0%} confidence."
-            ),
+            fallbackReasons=fallback_reasons,
+            explanation=explanation,
             modelVersion=self.model_version,
             registryFingerprint=self.registry_fingerprint,
             durationMs=duration_ms,

@@ -253,8 +253,16 @@ export async function submitSelectionEvidence(selectionEvidenceRecord) {
   }
 }
 
-export function createSelectionEvidenceRecord({ query, roleKey, result, selectedRoute, userId }) {
+export function createSelectionEvidenceRecord({
+  query,
+  roleKey,
+  result,
+  selectedRoutes = [],
+  outcome = "selected",
+  userId,
+}) {
   const recommendationQuery = result.requestQuery ?? query;
+  const selectedRouteIds = selectedRoutes.map((route) => route.id).filter(Boolean);
 
   return {
     id: crypto.randomUUID(),
@@ -262,8 +270,10 @@ export function createSelectionEvidenceRecord({ query, roleKey, result, selected
     userId,
     query: recommendationQuery,
     roleKey,
-    evidenceType: "clarification-selection",
-    selectedRouteId: selectedRoute.id,
+    evidenceType:
+      outcome === "none-match" ? "clarification-none-match" : "clarification-selection",
+    outcome,
+    selectedRouteIds,
     suggestedRouteIds: (result.routes ?? []).map((route) => route.id).filter(Boolean),
     timestamp: new Date().toISOString(),
   };

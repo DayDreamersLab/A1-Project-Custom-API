@@ -1,12 +1,10 @@
 import { routeRegistry } from "../data/routeRegistry";
 import {
   normalize,
-  queryRequestsAllRelated,
-  queryRequestsOpen,
   tokenize,
 } from "./queryIntent";
 
-const maxRelatedRoutes = 8;
+const maxUncertainSuggestions = 3;
 
 function toPublicRoute(route) {
   return {
@@ -88,15 +86,14 @@ function scoreRoute(route, query, roleKey, preferences, expertRules, userProfile
 }
 
 function buildLocalRecommendation({ query, roleKey, preferences, expertRules, userProfile }) {
-  const shouldReturnMultipleRoutes = queryRequestsAllRelated(query);
   const scoredRoutes = routeRegistry
     .map((route) => ({
       ...route,
-      score: scoreRoute(route, query, roleKey, preferences, expertRules, userProfile),
+      score: scoreRoute(route, query, roleKey, preferences, expertRules, userProfile ?? {}),
     }))
     .filter((route) => route.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, shouldReturnMultipleRoutes ? maxRelatedRoutes : 1);
+    .slice(0, maxUncertainSuggestions);
 
   const selectedRoute = scoredRoutes[0] ?? null;
   const publicRoutes = scoredRoutes.map(toPublicRoute);
@@ -104,19 +101,21 @@ function buildLocalRecommendation({ query, roleKey, preferences, expertRules, us
   return {
     recommendationId: createLocalRecommendationId(query, roleKey, publicRoutes),
     requestQuery: query,
-    mode: "local-route-registry",
+    mode: "route-suggestions",
+    routingStrategy: "uncertain-local-suggestions",
     roleKey,
     recommendedLinkIds: [],
     openLinkId: null,
-    route: selectedRoute ? toPublicRoute(selectedRoute) : null,
+    route: null,
     routes: publicRoutes,
-    openMode: publicRoutes.length > 1 ? "multiple" : "single",
-    shouldOpen: queryRequestsOpen(query) && Boolean(selectedRoute),
+    openMode: "suggestions",
+    shouldOpen: false,
+    requiresClarification: true,
+    clarificationPrompt:
+      "The assistant API could not confirm a route. Which of these approved routes did you mean?",
     explanation: selectedRoute
-      ? shouldReturnMultipleRoutes
-        ? `Matched ${publicRoutes.length} related routes against routeRegistry using local keyword scoring. Start the Ollama API to let Qwen 3 rank registry candidates.`
-        : "Matched against routeRegistry using local keyword scoring. Start the Ollama API to let Qwen 3 rank registry candidates."
-      : "No strong route-registry match was found. Add registry keywords or start the Ollama API for better interpretation.",
+      ? "No route was opened automatically. These are the strongest local routeRegistry suggestions."
+      : "No possible route-registry match was found. Refine the request or check the assistant API.",
     appliedRules: expertRules
       .filter((rule) => normalize(query).includes(normalize(rule.trigger)))
       .map((rule) => rule.name),

@@ -651,6 +651,25 @@ h3 {
   background: var(--surface);
 }
 
+.assistant-route-option {
+  grid-template-columns: auto minmax(0, 1fr);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.assistant-route-option:hover,
+.assistant-route-option.is-selected {
+  border-color: var(--primary);
+  background: var(--surface-active);
+}
+
+.assistant-route-option input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--primary);
+}
+
 .assistant-route-card strong {
   display: block;
   margin-bottom: 4px;
@@ -676,6 +695,33 @@ h3 {
 .assistant-route-card button:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+.assistant-clarification-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.assistant-clarification-actions .open-link-button {
+  margin: 0;
+}
+
+.assistant-clarification-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.none-match-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary-dark);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
 }
 
 .detail-panel p:not(.eyebrow) {
@@ -847,6 +893,10 @@ h3 {
 
   .assistant-query button {
     min-height: 42px;
+  }
+
+  .assistant-clarification-actions {
+    grid-template-columns: 1fr;
   }
 
   .role-picker.no-role-selected {

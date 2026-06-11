@@ -11,8 +11,10 @@
       "recentQueries": [],
       "feedbackCount": 0,
       "createdAt": "2026-06-06T03:54:55.691Z",
-      "updatedAt": "2026-06-06T03:54:55.691Z"
+      "updatedAt": "2026-06-06T03:54:55.691Z",
+      "selectionEvidenceCount": 0
     }
   },
-  "feedback": []
+  "feedback": [],
+  "selectionEvidence": []
 }

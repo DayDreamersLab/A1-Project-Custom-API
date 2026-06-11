@@ -176,6 +176,22 @@ npm run ranker:train
 npm run ranker:evaluate
 ```
 
+Training uses `--device auto` by default. It selects CUDA when available,
+otherwise Apple MPS when available, and otherwise CPU. Select a device
+explicitly when needed:
+
+```bash
+npm run ranker:train -- --device cuda
+npm run ranker:train -- --device cuda:1
+npm run ranker:train -- --device mps
+npm run ranker:train -- --device cpu
+```
+
+The model, route vectors, training targets, validation targets, loss weights,
+and batch indices are moved onto the selected device. Checkpoints store the
+training-device description but save model weights on CPU so they remain
+portable to the lower-powered inference machine.
+
 Training writes the ignored local checkpoint:
 
 ```text
@@ -221,7 +237,8 @@ training attempt:
 npm run ranker:experiment -- \
   --run-name radar-keyword-update \
   --notes "Added radar synonyms and clarified composite descriptions" \
-  --held-out-test pytorch_route_ranker/data/held_out_test.jsonl
+  --held-out-test pytorch_route_ranker/data/held_out_test.jsonl \
+  --device cuda
 ```
 
 Windows PowerShell uses the same command on one line:

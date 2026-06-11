@@ -91,6 +91,13 @@ Personalization should adjust ordering and defaults:
 - preferred categories
 - frequent links
 
+When routing is uncertain, the prototype lets the user select one or several
+suggested routes. One fixed `+0.5` route-evidence budget is divided across the
+selected routes, and the selected count is recorded as a corrected `single` or
+`multiple` request scope. `None of these match` is retained as review/training
+evidence but does not alter route or topic preference scores. Each
+clarification result can update personalization only once.
+
 Expert rules should act as explicit workflow instructions:
 
 - "When I ask for runway wind data, show wind shear first."
@@ -117,7 +124,7 @@ Normal deterministic code is responsible only for:
 - retrieving the selected paths from `routeRegistry`;
 - caching repeated responses and coalescing duplicate requests;
 - applying explicit user scope constraints and bounded preference adjustments;
-- providing an emergency route fallback if the configured AI is unavailable.
+- returning selectable route suggestions when the configured AI is uncertain or unavailable.
 
 See `pytorch_route_ranker/README.md` for setup, training, evaluation, and API
 instructions.

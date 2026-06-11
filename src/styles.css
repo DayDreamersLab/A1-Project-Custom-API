@@ -566,6 +566,26 @@ h3 {
   line-height: 1.45;
 }
 
+.assistant-result-uncertain {
+  border-color: var(--accent);
+}
+
+.assistant-clarification {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+}
+
+.assistant-clarification strong {
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.assistant-clarification p {
+  margin: 5px 0 0;
+}
+
 .assistant-rules-grid .example-rule {
   padding-left: 9px;
   border-left: 3px solid var(--line);

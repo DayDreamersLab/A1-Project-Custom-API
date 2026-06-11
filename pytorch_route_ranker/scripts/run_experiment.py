@@ -31,6 +31,7 @@ SUMMARY_FIELDS = [
     "learningRate",
     "featureDimension",
     "hiddenDimension",
+    "trainingDevice",
     "seed",
     "scopeAccuracy",
     "topRouteAccuracy",
@@ -64,6 +65,11 @@ def parse_args():
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--feature-dimension", type=int, default=4096)
     parser.add_argument("--hidden-dimension", type=int, default=128)
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Training device passed to train.py: auto, cpu, cuda, cuda:N, or mps.",
+    )
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--show-mismatches", type=int, default=20)
@@ -268,6 +274,7 @@ def main() -> None:
             "learningRate": args.learning_rate,
             "featureDimension": args.feature_dimension,
             "hiddenDimension": args.hidden_dimension,
+            "requestedDevice": args.device,
             "validationFraction": args.validation_fraction,
             "seed": args.seed,
         },
@@ -334,12 +341,18 @@ def main() -> None:
             str(args.feature_dimension),
             "--hidden-dimension",
             str(args.hidden_dimension),
+            "--device",
+            args.device,
             "--validation-fraction",
             str(args.validation_fraction),
             "--seed",
             str(args.seed),
         ]
-        run_and_tee(training_command, run_directory / "training-log.txt")
+        training_output = run_and_tee(training_command, run_directory / "training-log.txt")
+        training_device_match = re.search(r"^trainingDevice=(.+?) requestedDevice=", training_output, re.MULTILINE)
+        configuration["training"]["selectedDevice"] = (
+            training_device_match.group(1) if training_device_match else "unknown"
+        )
 
         evaluation_env = os.environ.copy()
         evaluation_env["AMIDS_RANKER_CHECKPOINT_PATH"] = str(model_path)
@@ -437,6 +450,7 @@ def main() -> None:
                 "learningRate": args.learning_rate,
                 "featureDimension": args.feature_dimension,
                 "hiddenDimension": args.hidden_dimension,
+                "trainingDevice": configuration.get("training", {}).get("selectedDevice", ""),
                 "seed": args.seed,
                 **metrics,
             }

@@ -1471,6 +1471,34 @@ function buildRankerRouteBiases(payload) {
   return biases;
 }
 
+// Converts structured PyTorch fallback reasons into an accurate diagnostic message.
+function describePytorchFallback(rawResult) {
+  const fallbackReasons = Array.isArray(rawResult.fallbackReasons)
+    ? rawResult.fallbackReasons
+    : [];
+  const messages = fallbackReasons.map((reason) => {
+    if (reason === "uncertain-request-scope") {
+      return `the ranker could not confidently distinguish a single-route request from an all-related-routes request (scope probability ${rawResult.scopeProbability ?? "unknown"}; route confidence ${rawResult.confidence ?? "unknown"})`;
+    }
+    if (reason === "insufficient-multiple-routes") {
+      return "the request appeared to require multiple routes, but fewer than two sufficiently relevant routes were selected";
+    }
+    if (reason === "no-route-selected") {
+      return "the ranker did not select an approved route";
+    }
+    if (reason === "low-confidence") {
+      return `route-selection confidence was below the configured threshold (${rawResult.confidence ?? "unknown"})`;
+    }
+    return `the ranker reported ${reason}`;
+  });
+
+  if (messages.length > 0) {
+    return `PyTorch ranker could not confirm the route because ${messages.join("; ")}.`;
+  }
+
+  return `PyTorch ranker could not confirm the route (confidence ${rawResult.confidence ?? "unknown"}, scope probability ${rawResult.scopeProbability ?? "unknown"}).`;
+}
+
 // Asks the specialised local PyTorch service to rank every approved route.
 async function askPytorchRanker(payload, metadata) {
   // Records the complete local ranker round-trip duration.
@@ -1509,9 +1537,7 @@ async function askPytorchRanker(payload, metadata) {
     const rawResult = await response.json();
     // Escalates uncertain decisions instead of silently opening a weak match.
     if (rawResult.needsFallback) {
-      throw new Error(
-        `PyTorch ranker confidence was insufficient (${rawResult.confidence ?? "unknown"}).`
-      );
+      throw new Error(describePytorchFallback(rawResult));
     }
 
     // Validates ranker-selected IDs against Node's authoritative registry.

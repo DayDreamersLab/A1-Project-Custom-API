@@ -18,6 +18,8 @@ import {
   tokenize,
 // Finishes importing shared query-intent helpers.
 } from "../src/services/queryIntent.js";
+// Imports the local exporter that turns clarification choices into a review queue.
+import { exportReviewableInteractionEvidence } from "./interactionEvidenceExporter.mjs";
 
 // Reads the local assistant API port from the environment, defaulting to 3001.
 const PORT = Number(process.env.AMIDS_ASSISTANT_PORT ?? 3001);
@@ -853,6 +855,15 @@ async function processSelectionEvidenceTransaction(payload) {
   ].slice(0, 250);
   // Persists the updated profile and evidence record.
   await writePersonalizationStore(store);
+  // Adds the new interaction to the local pending-review JSONL queue.
+  try {
+    await exportReviewableInteractionEvidence({
+      selectionEvidence: [selectionEvidenceRecord],
+      routeRegistry,
+    });
+  } catch (error) {
+    console.warn(`[Interaction evidence export] ${error.message}`);
+  }
   // Clears cached recommendations so the bounded evidence can affect later requests.
   assistantResponseCache.clear();
 

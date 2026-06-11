@@ -1,4 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 const moduleName = process.argv[2];
 const moduleArguments = process.argv.slice(3);
@@ -9,15 +11,25 @@ if (!moduleName) {
 }
 
 const configuredPython = process.env.AMIDS_PYTHON_COMMAND;
+const projectVirtualEnvironmentPython =
+  process.platform === "win32"
+    ? resolve("pytorch_route_ranker", ".venv", "Scripts", "python.exe")
+    : resolve("pytorch_route_ranker", ".venv", "bin", "python");
 const candidates = configuredPython
   ? [{ command: configuredPython, prefixArguments: [] }]
   : process.platform === "win32"
     ? [
+        ...(existsSync(projectVirtualEnvironmentPython)
+          ? [{ command: projectVirtualEnvironmentPython, prefixArguments: [] }]
+          : []),
         { command: "python", prefixArguments: [] },
         { command: "py", prefixArguments: ["-3.11"] },
         { command: "python3", prefixArguments: [] },
       ]
     : [
+        ...(existsSync(projectVirtualEnvironmentPython)
+          ? [{ command: projectVirtualEnvironmentPython, prefixArguments: [] }]
+          : []),
         { command: "python3", prefixArguments: [] },
         { command: "python", prefixArguments: [] },
       ];

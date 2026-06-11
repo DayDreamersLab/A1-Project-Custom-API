@@ -89,6 +89,8 @@ export default function AssistantPanel({
   const recommendedRoutes = getRecommendedRoutes(result);
   const openTarget = recommendedRoutes[0] ?? null;
   const hasMultipleRoutes = recommendedRoutes.length > 1;
+  const requiresClarification = Boolean(result?.requiresClarification);
+  const shouldShowRouteList = requiresClarification || hasMultipleRoutes;
   const currentRecommendationKey = getRecommendationKey(result, query, roleKey);
   const currentFeedbackDecision = currentRecommendationKey
     ? feedbackDecisions.get(currentRecommendationKey)
@@ -127,7 +129,9 @@ export default function AssistantPanel({
 
       if (assistantResult.backendError) {
         notices.push(
-          `Local route-registry fallback handled this request. Assistant API issue: ${assistantResult.backendError}`
+          assistantResult.requiresClarification
+            ? `The routing services could not confirm a route: ${assistantResult.backendError}`
+            : `Assistant API issue: ${assistantResult.backendError}`
         );
       }
 
@@ -276,20 +280,32 @@ export default function AssistantPanel({
       )}
 
       {result && (
-        <article className="assistant-result">
-          <h4>Recommendation</h4>
+        <article className={`assistant-result${requiresClarification ? " assistant-result-uncertain" : ""}`}>
+          <h4>{requiresClarification ? "Clarification needed" : "Recommendation"}</h4>
           <p>{result.explanation}</p>
+          {requiresClarification && (
+            <div className="assistant-clarification" role="status">
+              <strong>{result.clarificationPrompt}</strong>
+              <p>Select a possible route below, or refine your request and ask again.</p>
+            </div>
+          )}
           {notice && <p>{notice}</p>}
-          {result.appliedRules.length > 0 && (
+          {(result.appliedRules ?? []).length > 0 && (
             <p>Applied rule: {result.appliedRules.join(", ")}</p>
           )}
-          {hasMultipleRoutes ? (
+          {shouldShowRouteList ? (
             <div className="assistant-route-list">
               <div className="assistant-route-list-topline">
-                <h5>{recommendedRoutes.length} related routes found</h5>
-                <button className="open-link-button" type="button" onClick={handleShowAll}>
-                  Display all on this screen
-                </button>
+                <h5>
+                  {requiresClarification
+                    ? `${recommendedRoutes.length} possible route${recommendedRoutes.length === 1 ? "" : "s"}`
+                    : `${recommendedRoutes.length} related routes found`}
+                </h5>
+                {!requiresClarification && (
+                  <button className="open-link-button" type="button" onClick={handleShowAll}>
+                    Display all on this screen
+                  </button>
+                )}
               </div>
               {recommendedRoutes.map((route) => (
                 <article className="assistant-route-card" key={route.id}>
@@ -298,7 +314,7 @@ export default function AssistantPanel({
                     <p>{route.description}</p>
                   </div>
                   <button type="button" onClick={() => onOpenLink(route)}>
-                    Open
+                    {requiresClarification ? "Choose and open" : "Open"}
                   </button>
                 </article>
               ))}
@@ -314,28 +330,30 @@ export default function AssistantPanel({
               </button>
             )
           )}
-          <div className="assistant-feedback">
-            <button
-              type="button"
-              disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
-              onClick={() => handleFeedback("helpful")}
-            >
-              {isSubmittingFeedback
-                ? "Saving..."
-                : currentFeedbackDecision === "helpful"
-                  ? "Helpful recorded"
-                  : "Helpful"}
-            </button>
-            <button
-              type="button"
-              disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
-              onClick={() => handleFeedback("not-helpful")}
-            >
-              {currentFeedbackDecision === "not-helpful"
-                ? "Not helpful recorded"
-                : "Not helpful"}
-            </button>
-          </div>
+          {!requiresClarification && (
+            <div className="assistant-feedback">
+              <button
+                type="button"
+                disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
+                onClick={() => handleFeedback("helpful")}
+              >
+                {isSubmittingFeedback
+                  ? "Saving..."
+                  : currentFeedbackDecision === "helpful"
+                    ? "Helpful recorded"
+                    : "Helpful"}
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
+                onClick={() => handleFeedback("not-helpful")}
+              >
+                {currentFeedbackDecision === "not-helpful"
+                  ? "Not helpful recorded"
+                  : "Not helpful"}
+              </button>
+            </div>
+          )}
         </article>
       )}
 

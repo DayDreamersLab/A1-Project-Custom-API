@@ -10,7 +10,11 @@
     "ranker:generate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.generate_training_data",
     "ranker:train": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.train",
     "ranker:evaluate": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.evaluate",
+    "ranker:compare": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.compare_models",
     "ranker:experiment": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.run_experiment",
+    "ranker:promote": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.manage_model promote",
+    "ranker:rollback": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.manage_model rollback",
+    "ranker:status": "node scripts/runPythonModule.mjs pytorch_route_ranker.scripts.manage_model status",
     "ranker:api": "node scripts/runPythonModule.mjs uvicorn pytorch_route_ranker.app.main:app --host 127.0.0.1 --port 8001"
   },
   "dependencies": {

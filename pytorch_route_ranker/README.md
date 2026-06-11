@@ -187,14 +187,29 @@ Evaluation reports:
 - single/multiple scope accuracy;
 - top-route accuracy;
 - relevant-route recall;
+- exact route-set accuracy, precision, F1, and route-count error;
+- a dedicated breakdown for multiple-route requests;
+- per-category metrics and a separate critical-example breakdown;
 - fallback rate;
 - average local latency.
+
+Held-out examples can identify one or more categories and safety-critical cases:
+
+```json
+{"query":"show all runway wind data","scope":"multiple","relevantRouteIds":["wind-current-observations","wind-runway-impact"],"categories":["wind","runway"],"critical":true}
+```
+
+When `categories` is omitted, evaluation infers categories from the first
+keyword of each expected route. Explicit test categories are preferred because
+they remain meaningful if route metadata changes.
 
 Before production use, create a separate expert-reviewed test file that is
 never used for training and run:
 
 ```bash
-python -m pytorch_route_ranker.scripts.evaluate --data path/to/held_out_test.jsonl
+npm run ranker:evaluate -- \
+  --data path/to/held_out_test.jsonl \
+  --output path/to/evaluation-results.json
 ```
 
 ## Automated Reproducible Experiments
@@ -224,7 +239,10 @@ The command automatically:
 5. records Python, Node, Git, registry, and training configuration;
 6. trains a new model inside the run folder;
 7. evaluates that exact model against the snapshotted held-out test;
-8. stores all logs and appends metrics to `pytorch_route_ranker/runs/summary.csv`.
+8. stores detailed metrics in `evaluation-results.json`;
+9. automatically compares the candidate with the active model when one exists;
+10. stores `comparison.json`, all logs, and summary metrics in
+    `pytorch_route_ranker/runs/summary.csv`.
 
 Each completed run resembles:
 
@@ -235,6 +253,9 @@ pytorch_route_ranker/runs/20260610-143000-radar-keyword-update/
   model.pt
   training-log.txt
   evaluation-log.txt
+  evaluation-results.json
+  comparison.json
+  comparison-log.txt
   data/
   source/
 ```
@@ -243,12 +264,75 @@ Run folders are ignored by Git because they may contain large models and
 confidential registry snapshots. Back them up using an approved internal
 location. The runner never automatically promotes a model to
 `pytorch_route_ranker/models/route_ranker.pt`; compare `summary.csv` and review
-mismatches before promotion.
+mismatches before promotion. A completed experiment never promotes itself.
 
-All npm ranker commands use `scripts/runPythonModule.mjs` to find `py -3.11`,
-`python`, or `python3`, making the same commands usable on Windows and macOS.
-Set `AMIDS_PYTHON_COMMAND` if the workplace Python executable uses another
-name.
+## Compare, Promote, And Roll Back Models
+
+Compare any candidate against the currently active checkpoint using the same
+registry and frozen held-out test:
+
+```bash
+npm run ranker:compare -- \
+  --candidate pytorch_route_ranker/runs/RUN_ID/model.pt \
+  --data pytorch_route_ranker/data/held_out_test.jsonl \
+  --output pytorch_route_ranker/runs/RUN_ID/comparison.json
+```
+
+The comparison rejects candidates that regress overall top-route or scope
+accuracy, multiple-route recall or exact-set accuracy, critical examples, or
+sufficiently represented categories. It also enforces fallback-rate and
+latency limits. Review `comparison.json` even when the candidate is eligible.
+
+Promote only an eligible, reviewed candidate:
+
+```bash
+npm run ranker:promote -- \
+  --candidate pytorch_route_ranker/runs/RUN_ID/model.pt \
+  --comparison pytorch_route_ranker/runs/RUN_ID/comparison.json \
+  --approved-by "reviewer-name" \
+  --reason "Improved held-out multiple-route recall without regressions"
+```
+
+For the first managed release only, when no active checkpoint exists, bootstrap
+from a reviewed detailed evaluation:
+
+```bash
+npm run ranker:promote -- \
+  --candidate pytorch_route_ranker/runs/RUN_ID/model.pt \
+  --allow-initial \
+  --initial-evaluation pytorch_route_ranker/runs/RUN_ID/evaluation-results.json \
+  --approved-by "reviewer-name" \
+  --reason "Approved initial managed model"
+```
+
+Promotion rejects stale comparisons, changed model files, and registry
+mismatches. It archives immutable release copies, atomically replaces the
+active checkpoint, and records the approval in
+`pytorch_route_ranker/models/promotion_history.jsonl`. Check status and
+available release IDs with:
+
+```bash
+npm run ranker:status
+```
+
+Roll back to an archived release:
+
+```bash
+npm run ranker:rollback -- \
+  --release RELEASE_ID \
+  --approved-by "reviewer-name" \
+  --reason "Regression observed during controlled operational testing"
+```
+
+Restart `npm run ranker:api` after promotion or rollback. The running process
+keeps its currently loaded checkpoint until restarted. These commands record
+the supplied reviewer identity; production approval still requires appropriate
+operating-system permissions and organisational access controls.
+
+All npm ranker commands use `scripts/runPythonModule.mjs`. It prefers the
+project's `pytorch_route_ranker/.venv`, then searches for `python`, `py -3.11`,
+or `python3`, making the same commands usable on Windows and macOS. Set
+`AMIDS_PYTHON_COMMAND` if the workplace Python executable uses another name.
 
 ## 5. Start The Ranker And Gateway
 

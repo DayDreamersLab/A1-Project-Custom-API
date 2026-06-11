@@ -1,457 +1,863 @@
-import { useState } from "react";
-import {
-  askAssistant,
-  createFeedbackRecord,
-  createSelectionEvidenceRecord,
-  submitAssistantFeedback,
-  submitSelectionEvidence,
-} from "../services/assistantEngine";
-import {
-  queryRequestsAllRelated,
-  queryRequestsNavigation,
-} from "../services/queryIntent";
+:root {
+  color-scheme: light;
+  --bg: #eef3f8;
+  --surface: #ffffff;
+  --surface-muted: #f7fafc;
+  --text: #142033;
+  --muted: #5d6b7e;
+  --line: #d8e1ea;
+  --primary: #1769aa;
+  --primary-dark: #0f4f82;
+  --accent: #f3b43f;
+  --danger: #b42318;
+  --surface-panel: rgba(255, 255, 255, 0.88);
+  --surface-workspace: rgba(255, 255, 255, 0.92);
+  --surface-active: #edf7ff;
+  --detail-start: #ffffff;
+  --detail-end: #f8fbfe;
+  --on-primary: #ffffff;
+  --on-primary-muted: rgba(255, 255, 255, 0.78);
+  --focus-ring: rgba(23, 105, 170, 0.36);
+  --body-highlight: rgba(23, 105, 170, 0.1);
+  --soft-shadow: 0 8px 24px rgba(20, 32, 51, 0.06);
+  --shadow: 0 18px 50px rgba(20, 32, 51, 0.12);
+}
 
-function writeInitialReservedNavigationMessage(reservedWindow) {
-  try {
-    reservedWindow.document.open();
-    reservedWindow.document.write(`
-      <!doctype html>
-      <title>Opening AMIDS route...</title>
-      <body style="font-family: system-ui, sans-serif; padding: 24px;">
-        <p></p>
-      </body>
-    `);
-    reservedWindow.document.querySelector("p").textContent =
-      "currently matching your request to an AMIDS route";
-    reservedWindow.document.close();
-  } catch {
-    // Some browsers restrict writing to the reserved tab. Navigation can still work.
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f151d;
+  --surface: #18212c;
+  --surface-muted: #202b37;
+  --text: #edf4fb;
+  --muted: #a9b8c8;
+  --line: #344252;
+  --primary: #58a6e7;
+  --primary-dark: #9bcef5;
+  --accent: #f3c568;
+  --danger: #d85c52;
+  --surface-panel: rgba(24, 33, 44, 0.94);
+  --surface-workspace: rgba(24, 33, 44, 0.96);
+  --surface-active: #18364d;
+  --detail-start: #18212c;
+  --detail-end: #141c25;
+  --on-primary: #08131d;
+  --on-primary-muted: rgba(8, 19, 29, 0.74);
+  --focus-ring: rgba(88, 166, 231, 0.42);
+  --body-highlight: rgba(88, 166, 231, 0.13);
+  --soft-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, var(--body-highlight), transparent 280px),
+    var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 28px 0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 7px;
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: clamp(2rem, 4vw, 3.3rem);
+  line-height: 1;
+}
+
+h2 {
+  margin-bottom: 10px;
+  font-size: 1.6rem;
+}
+
+h3 {
+  margin-bottom: 10px;
+  font-size: 1.45rem;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: max-content;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.theme-toggle:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.theme-toggle-track {
+  display: flex;
+  align-items: center;
+  width: 38px;
+  height: 22px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 180ms ease;
+}
+
+.theme-toggle-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  transform: translateX(0);
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.theme-toggle[aria-pressed="true"] .theme-toggle-track {
+  background: var(--primary);
+}
+
+.theme-toggle[aria-pressed="true"] .theme-toggle-thumb {
+  background: var(--on-primary);
+  transform: translateX(16px);
+}
+
+.role-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.role-picker.no-role-selected {
+  min-height: calc(100vh - 160px);
+}
+
+.role-picker.is-entering {
+  animation: view-in 180ms ease both;
+}
+
+.role-picker.is-exiting {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.985);
+}
+
+.role-card {
+  display: grid;
+  min-width: 0;
+  border-radius: 8px;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.role-picker.is-exiting .role-card:not(.is-selected) {
+  opacity: 0;
+  transform: scale(0.94);
+}
+
+.role-picker.is-exiting .role-card.is-selected {
+  transform: scale(1.025);
+}
+
+.role-button,
+.category-button,
+.clear-button,
+.briefing-link {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.role-button {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  width: 100%;
+  min-height: clamp(300px, 52vh, 560px);
+  padding: clamp(22px, 3vw, 34px);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  box-shadow: var(--soft-shadow);
+}
+
+.role-card.is-selected .role-button {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+  box-shadow: var(--shadow);
+}
+
+.role-card.is-selected .role-button small {
+  color: var(--on-primary-muted);
+}
+
+.role-button span {
+  font-size: clamp(2rem, 5vw, 4.5rem);
+  font-weight: 850;
+  line-height: 0.95;
+}
+
+.role-button small {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: clamp(0.95rem, 1.5vw, 1.15rem);
+  font-weight: 700;
+}
+
+.role-button:hover,
+.category-button:hover,
+.clear-button:hover,
+.briefing-link:hover {
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+
+.role-button.is-active {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+
+.role-button.is-active small {
+  color: var(--on-primary-muted);
+}
+
+.role-interface {
+  display: grid;
+  gap: 16px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.role-interface.is-entering {
+  animation: view-in 180ms ease both;
+}
+
+.role-interface.is-exiting {
+  opacity: 0;
+  transform: translateY(10px) scale(0.985);
+}
+
+.role-interface-topline {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow);
+}
+
+.role-interface-topline .eyebrow {
+  color: var(--on-primary-muted);
+}
+
+.role-interface-topline h2 {
+  margin-bottom: 0;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.95;
+}
+
+.role-interface-topline .clear-button {
+  background: var(--surface);
+  color: var(--primary-dark);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(300px, 0.9fr) minmax(420px, 1.3fr);
+  gap: 16px;
+}
+
+.route-workspace {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-workspace);
+  box-shadow: var(--shadow);
+}
+
+.route-workspace-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.route-workspace-topline h3 {
+  margin-bottom: 0;
+}
+
+.route-tile-grid {
+  display: grid;
+  gap: 8px;
+  min-height: min(740px, calc(100vh - 280px));
+}
+
+.route-tile-grid-count-1 {
+  grid-template-columns: 1fr;
+}
+
+.route-tile-grid-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.route-tile-grid-count-3,
+.route-tile-grid-count-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.route-tile-grid-count-5,
+.route-tile-grid-count-6 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.route-tile-grid-count-7,
+.route-tile-grid-count-8 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.route-tile {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.route-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.route-tile-header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-tile-header button {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary-dark);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.route-tile iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: #ffffff;
+}
+
+.rule-manager-panel,
+.assistant-panel,
+.control-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  box-shadow: var(--shadow);
+}
+
+.rule-manager-panel,
+.assistant-panel {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 22px;
+}
+
+.assistant-panel-header,
+.assistant-query div,
+.assistant-feedback {
+  display: flex;
+  gap: 10px;
+}
+
+.assistant-panel-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.assistant-panel h3,
+.assistant-panel h4 {
+  margin-bottom: 8px;
+}
+
+.assistant-mode {
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.assistant-query {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-query label {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.assistant-query input {
+  min-width: 0;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.rule-query {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.rule-query textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.assistant-query button,
+.assistant-feedback button {
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.assistant-query button {
+  padding: 0 14px;
+}
+
+.rule-query button {
+  min-height: 42px;
+}
+
+.assistant-query button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.assistant-rules-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-rules-grid section,
+.personalization-summary,
+.assistant-result,
+.feedback-log {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.assistant-rules-grid p,
+.personalization-summary p,
+.assistant-result p,
+.feedback-log p {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.assistant-result-uncertain {
+  border-color: var(--accent);
+}
+
+.assistant-clarification {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+}
+
+.assistant-clarification strong {
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.assistant-clarification p {
+  margin: 5px 0 0;
+}
+
+.assistant-rules-grid .example-rule {
+  padding-left: 9px;
+  border-left: 3px solid var(--line);
+  font-style: italic;
+}
+
+.personalization-summary h4 {
+  margin-bottom: 8px;
+}
+
+.assistant-feedback button {
+  padding: 9px 11px;
+}
+
+.assistant-feedback button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.assistant-feedback button:last-child {
+  background: var(--surface);
+  color: var(--primary-dark);
+}
+
+.open-link-button {
+  width: 100%;
+  min-height: 42px;
+  margin: 6px 0 12px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.assistant-route-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.assistant-route-list-topline {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-route-list h5 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.assistant-route-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.assistant-route-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+
+.assistant-route-card p {
+  margin-bottom: 0;
+}
+
+.assistant-route-card button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary-dark);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.assistant-route-card button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.detail-panel p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.control-panel {
+  padding: 22px;
+}
+
+.panel-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.clear-button {
+  padding: 10px 13px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.category-button {
+  min-height: 150px;
+  padding: 16px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.category-button strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1.05rem;
+}
+
+.category-button span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.category-button.is-active {
+  border-color: var(--primary);
+  background: var(--surface-active);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.detail-panel {
+  min-height: 230px;
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--detail-start), var(--detail-end));
+}
+
+.detail-panel-empty {
+  display: grid;
+  align-content: center;
+}
+
+.link-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.briefing-link {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 110px;
+  padding: 14px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.briefing-link span {
+  color: var(--on-primary-muted);
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.briefing-link.secondary {
+  background: var(--surface);
+  color: var(--primary-dark);
+}
+
+.briefing-link.secondary span {
+  color: var(--muted);
+}
+
+.briefing-link.warning {
+  background: var(--danger);
+}
+
+.briefing-link.is-recommended {
+  outline: 3px solid rgba(243, 180, 63, 0.72);
+  outline-offset: 2px;
+  box-shadow: 0 14px 34px rgba(243, 180, 63, 0.24);
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
-function reserveNavigationWindow() {
-  const reservedWindow = window.open("", "_blank");
-  if (!reservedWindow) return null;
-
-  writeInitialReservedNavigationMessage(reservedWindow);
-
-  return reservedWindow;
-}
-
-function closeReservedWindow(reservedWindow) {
-  try {
-    if (reservedWindow && !reservedWindow.closed) {
-      reservedWindow.close();
-    }
-  } catch {
-    // Ignore close failures; the user can close the tab manually.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }
 
-function getRecommendedRoutes(result) {
-  if (!result) return [];
-  if (Array.isArray(result.routes) && result.routes.length > 0) {
-    return result.routes;
-  }
-  return result.route ? [result.route] : [];
-}
-
-function getRecommendationKey(result, query, roleKey) {
-  if (!result) return null;
-  if (result.recommendationId) return result.recommendationId;
-
-  const routeIds = getRecommendedRoutes(result)
-    .map((route) => route.id)
-    .filter(Boolean)
-    .sort()
-    .join(",");
-
-  return `${roleKey}::${(result.requestQuery ?? query).trim().toLowerCase()}::${routeIds}`;
-}
-
-export default function AssistantPanel({
-  userId,
-  roleKey,
-  preferences,
-  userProfile,
-  expertRules,
-  onAssistantResult,
-  onOpenLink,
-  onShowRoutes,
-  onProfileUpdated,
-}) {
-  const [query, setQuery] = useState("");
-  const [result, setResult] = useState(null);
-  const [feedbackLog, setFeedbackLog] = useState([]);
-  const [feedbackDecisions, setFeedbackDecisions] = useState(() => new Map());
-  const [selectionDecisions, setSelectionDecisions] = useState(() => new Map());
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
-  const [isSubmittingSelection, setIsSubmittingSelection] = useState(false);
-  const [notice, setNotice] = useState("");
-
-  const recommendedRoutes = getRecommendedRoutes(result);
-  const openTarget = recommendedRoutes[0] ?? null;
-  const hasMultipleRoutes = recommendedRoutes.length > 1;
-  const requiresClarification = Boolean(result?.requiresClarification);
-  const shouldShowRouteList = requiresClarification || hasMultipleRoutes;
-  const currentRecommendationKey = getRecommendationKey(result, query, roleKey);
-  const currentFeedbackDecision = currentRecommendationKey
-    ? feedbackDecisions.get(currentRecommendationKey)
-    : null;
-  const hasRatedCurrentRecommendation =
-    Boolean(currentFeedbackDecision);
-  const currentSelectionDecision = currentRecommendationKey
-    ? selectionDecisions.get(currentRecommendationKey)
-    : null;
-
-  async function handleAsk(event) {
-    event.preventDefault();
-    const trimmedQuery = query.trim();
-    if (!trimmedQuery) return;
-
-    const wantsAllRelatedRoutes = queryRequestsAllRelated(trimmedQuery);
-    const reservedWindow =
-      queryRequestsNavigation(trimmedQuery) && !wantsAllRelatedRoutes
-        ? reserveNavigationWindow()
-        : null;
-
-    setIsLoading(true);
-    setNotice("");
-
-    try {
-      const assistantResult = await askAssistant({
-        query: trimmedQuery,
-        userId,
-        roleKey,
-        preferences,
-        userProfile,
-        expertRules,
-      });
-
-      setResult(assistantResult);
-      onAssistantResult(assistantResult);
-
-      const notices = [];
-
-      if (assistantResult.backendError) {
-        notices.push(
-          assistantResult.requiresClarification
-            ? `The routing services could not confirm a route: ${assistantResult.backendError}`
-            : `Assistant API issue: ${assistantResult.backendError}`
-        );
-      }
-
-      const assistantRoutes = getRecommendedRoutes(assistantResult);
-      const shouldAutoOpenSingleRoute =
-        assistantResult.shouldOpen &&
-        assistantResult.openMode !== "multiple" &&
-        assistantRoutes.length === 1;
-
-      if (shouldAutoOpenSingleRoute) {
-        const routeToOpen = assistantRoutes[0];
-        const routeDescription = routeToOpen.description || routeToOpen.title || "the selected routeRegistry page";
-        const opened = onOpenLink(routeToOpen, {
-          targetWindow: reservedWindow,
-          loadingMessage: `currently opening matched AMIDS route containing ${routeDescription}`,
-          redirectDelayMs: 2500,
-        });
-        if (!opened) {
-          closeReservedWindow(reservedWindow);
-          notices.push("The assistant found a route, but the browser blocked auto-open. Use the open button below.");
-        }
-      } else {
-        closeReservedWindow(reservedWindow);
-        if (assistantResult.shouldOpen && assistantRoutes.length > 1) {
-          notices.push("The assistant found multiple related routes. Review them, then display them on this screen.");
-        }
-      }
-
-      if (notices.length > 0) {
-        setNotice(notices.join(" "));
-      }
-    } catch (error) {
-      closeReservedWindow(reservedWindow);
-      setNotice(error.message);
-    } finally {
-      setIsLoading(false);
-    }
+@media (max-width: 860px) {
+  .app-header,
+  .role-interface-topline,
+  .route-workspace-topline,
+  .panel-topline {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  async function handleFeedback(rating) {
-    const recommendationKey = getRecommendationKey(result, query, roleKey);
-    if (
-      !result ||
-      !recommendationKey ||
-      isSubmittingFeedback ||
-      feedbackDecisions.has(recommendationKey)
-    ) {
-      return;
-    }
-
-    const feedbackRecord = createFeedbackRecord({
-      query,
-      userId,
-      roleKey,
-      result,
-      rating,
-    });
-
-    setFeedbackDecisions((currentDecisions) => {
-      const nextDecisions = new Map(currentDecisions);
-      nextDecisions.set(recommendationKey, rating);
-      return nextDecisions;
-    });
-    setIsSubmittingFeedback(true);
-
-    try {
-      const response = await submitAssistantFeedback(feedbackRecord);
-
-      if (response.ok && response.profile) {
-        const savedFeedbackRecord = response.feedbackRecord ?? feedbackRecord;
-        setFeedbackLog((currentLog) => [savedFeedbackRecord, ...currentLog].slice(0, 3));
-        if (response.duplicate && response.feedbackRecord?.rating) {
-          setFeedbackDecisions((currentDecisions) => {
-            const nextDecisions = new Map(currentDecisions);
-            nextDecisions.set(recommendationKey, response.feedbackRecord.rating);
-            return nextDecisions;
-          });
-        }
-        onProfileUpdated(response.profile);
-        setNotice(response.duplicate
-          ? "Feedback was already recorded for this recommendation. Personalization was not changed again."
-          : `Feedback saved. Personalization updated for ${(response.profile.preferredRouteIds ?? []).length} preferred route(s).`);
-      } else if (response.error) {
-        setFeedbackDecisions((currentDecisions) => {
-          const nextDecisions = new Map(currentDecisions);
-          nextDecisions.delete(recommendationKey);
-          return nextDecisions;
-        });
-        setNotice(`Feedback was not saved, so you can try again: ${response.error}`);
-      }
-    } finally {
-      setIsSubmittingFeedback(false);
-    }
+  .role-picker,
+  .workspace,
+  .route-tile-grid,
+  .category-grid {
+    grid-template-columns: 1fr;
   }
 
-  async function handleSuggestionSelection(route) {
-    // Opens synchronously from the user's click so browsers do not treat it as a popup.
-    const opened = onOpenLink(route);
-
-    const recommendationKey = getRecommendationKey(result, query, roleKey);
-    if (
-      !result ||
-      !recommendationKey ||
-      !requiresClarification ||
-      isSubmittingSelection ||
-      selectionDecisions.has(recommendationKey)
-    ) {
-      return;
-    }
-
-    const selectionEvidenceRecord = createSelectionEvidenceRecord({
-      query,
-      userId,
-      roleKey,
-      result,
-      selectedRoute: route,
-    });
-
-    setSelectionDecisions((currentDecisions) => {
-      const nextDecisions = new Map(currentDecisions);
-      nextDecisions.set(recommendationKey, route.id);
-      return nextDecisions;
-    });
-    setIsSubmittingSelection(true);
-
-    try {
-      const response = await submitSelectionEvidence(selectionEvidenceRecord);
-      if (response.ok && response.profile) {
-        const recordedRouteId =
-          response.selectionEvidenceRecord?.selectedRouteId ?? route.id;
-        setSelectionDecisions((currentDecisions) => {
-          const nextDecisions = new Map(currentDecisions);
-          nextDecisions.set(recommendationKey, recordedRouteId);
-          return nextDecisions;
-        });
-        onProfileUpdated(response.profile);
-        setNotice(
-          response.duplicate
-            ? `This clarification choice was already recorded. Personalization was not changed again.${opened ? "" : " The browser also blocked the route from opening."}`
-            : `Choice recorded as bounded personalization evidence (+${response.profileDelta?.routeDelta ?? 0.5} for ${route.title}).${opened ? "" : " The browser blocked the route from opening."}`
-        );
-      } else if (response.error) {
-        setSelectionDecisions((currentDecisions) => {
-          const nextDecisions = new Map(currentDecisions);
-          nextDecisions.delete(recommendationKey);
-          return nextDecisions;
-        });
-        setNotice(
-          `${opened ? "The route opened" : "The browser blocked the route from opening"}, but its personalization evidence was not saved: ${response.error}`
-        );
-      }
-    } finally {
-      setIsSubmittingSelection(false);
-    }
+  .route-tile-grid {
+    grid-template-rows: none;
+    min-height: auto;
   }
 
-  function handleShowAll() {
-    const displayedCount = onShowRoutes(recommendedRoutes);
-    if (displayedCount < recommendedRoutes.length) {
-      setNotice(
-        `Displayed ${displayedCount} of ${recommendedRoutes.length} routes. Some route paths were unavailable or invalid.`
-      );
-    }
+  .route-tile {
+    min-height: 320px;
   }
 
-  return (
-    <section className="assistant-panel" aria-labelledby="assistant-title">
-      <div className="assistant-panel-header">
-        <div>
-          <p className="eyebrow">AI-Ready Layer</p>
-          <h3 id="assistant-title">AMIDS Assistant</h3>
-        </div>
-        <span className="assistant-mode">{result?.mode ?? "route-registry-ready"}</span>
-      </div>
+  .assistant-query div {
+    flex-direction: column;
+  }
 
-      <form className="assistant-query" onSubmit={handleAsk}>
-        <label htmlFor="assistant-query">Ask for the information you need</label>
-        <div>
-          <input
-            id="assistant-query"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Example: Give me runway wind data"
-          />
-          <button type="submit" disabled={isLoading}>
-            {isLoading ? "Checking..." : "Ask"}
-          </button>
-        </div>
-      </form>
+  .assistant-query button {
+    min-height: 42px;
+  }
 
-      {userProfile && (
-        <section className="personalization-summary" aria-label="Personalization summary">
-          <h4>Personalization active</h4>
-          <p>
-            Preferred routes:{" "}
-            {(userProfile.preferredRouteIds ?? []).length > 0
-              ? userProfile.preferredRouteIds.slice(0, 3).join(", ")
-              : "none yet"}
-          </p>
-          <p>
-            Frequent topics:{" "}
-            {(userProfile.frequentTopics ?? []).length > 0
-              ? userProfile.frequentTopics.slice(0, 4).join(", ")
-              : "none yet"}
-          </p>
-          <p>
-            Clarification choices recorded: {userProfile.selectionEvidenceCount ?? 0}
-          </p>
-        </section>
-      )}
+  .role-picker.no-role-selected {
+    min-height: auto;
+  }
 
-      {result && (
-        <article className={`assistant-result${requiresClarification ? " assistant-result-uncertain" : ""}`}>
-          <h4>{requiresClarification ? "Clarification needed" : "Recommendation"}</h4>
-          <p>{result.explanation}</p>
-          {requiresClarification && (
-            <div className="assistant-clarification" role="status">
-              <strong>{result.clarificationPrompt}</strong>
-              <p>Select a possible route below, or refine your request and ask again.</p>
-            </div>
-          )}
-          {notice && <p>{notice}</p>}
-          {(result.appliedRules ?? []).length > 0 && (
-            <p>Applied rule: {result.appliedRules.join(", ")}</p>
-          )}
-          {shouldShowRouteList ? (
-            <div className="assistant-route-list">
-              <div className="assistant-route-list-topline">
-                <h5>
-                  {requiresClarification
-                    ? `${recommendedRoutes.length} possible route${recommendedRoutes.length === 1 ? "" : "s"}`
-                    : `${recommendedRoutes.length} related routes found`}
-                </h5>
-                {!requiresClarification && (
-                  <button className="open-link-button" type="button" onClick={handleShowAll}>
-                    Display all on this screen
-                  </button>
-                )}
-              </div>
-              {recommendedRoutes.map((route) => (
-                <article className="assistant-route-card" key={route.id}>
-                  <div>
-                    <strong>{route.title}</strong>
-                    <p>{route.description}</p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={
-                      requiresClarification && isSubmittingSelection
-                    }
-                    onClick={() =>
-                      requiresClarification
-                        ? handleSuggestionSelection(route)
-                        : onOpenLink(route)
-                    }
-                  >
-                    {requiresClarification && currentSelectionDecision === route.id
-                      ? "Chosen"
-                      : requiresClarification
-                        ? "Choose and open"
-                        : "Open"}
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            openTarget && (
-              <button
-                className="open-link-button"
-                type="button"
-                onClick={() => onOpenLink(openTarget)}
-              >
-                Open {openTarget.title ?? openTarget.label}
-              </button>
-            )
-          )}
-          {!requiresClarification && (
-            <div className="assistant-feedback">
-              <button
-                type="button"
-                disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
-                onClick={() => handleFeedback("helpful")}
-              >
-                {isSubmittingFeedback
-                  ? "Saving..."
-                  : currentFeedbackDecision === "helpful"
-                    ? "Helpful recorded"
-                    : "Helpful"}
-              </button>
-              <button
-                type="button"
-                disabled={isSubmittingFeedback || hasRatedCurrentRecommendation}
-                onClick={() => handleFeedback("not-helpful")}
-              >
-                {currentFeedbackDecision === "not-helpful"
-                  ? "Not helpful recorded"
-                  : "Not helpful"}
-              </button>
-            </div>
-          )}
-        </article>
-      )}
+  .role-button {
+    min-height: 190px;
+  }
 
-      {feedbackLog.length > 0 && (
-        <div className="feedback-log">
-          <h4>Feedback records ready for backend logging</h4>
-          {feedbackLog.map((entry) => (
-            <p key={entry.id}>
-              {entry.rating} feedback stored for {entry.recommendedRouteId ?? "no route"}.
-            </p>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+  .theme-toggle {
+    width: fit-content;
+  }
 }

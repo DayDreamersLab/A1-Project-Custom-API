@@ -43,6 +43,11 @@ const pytorchRankerTimeoutMs = Math.max(
 );
 // Limits how many related routes a multiple-route response can contain.
 const maxRelatedRoutes = 8;
+// Limits how many alternatives are shown when the routing models cannot decide safely.
+const uncertainSuggestionLimit = Math.max(
+  1,
+  Number(process.env.AMIDS_UNCERTAIN_SUGGESTION_LIMIT ?? 3)
+);
 // Limits how many retrieved routes are sent to the AI model.
 const qwenCandidateLimit = Math.max(1, Number(process.env.AMIDS_QWEN_CANDIDATE_LIMIT ?? 12));
 // Gives broad requests a larger pool so the model can select several coherent routes.
@@ -51,7 +56,7 @@ const broadQwenCandidateLimit = Math.max(
   Number(process.env.AMIDS_BROAD_QWEN_CANDIDATE_LIMIT ?? 16)
 );
 // Changes whenever prompt behavior changes so outdated cached decisions are not reused.
-const assistantPromptVersion = "explicit-broad-scope-v2";
+const assistantPromptVersion = "uncertain-route-suggestions-v1";
 // Controls how long Ollama keeps the selected model loaded.
 const ollamaKeepAlive = process.env.OLLAMA_KEEP_ALIVE ?? -1;
 // Sets the maximum Ollama context size used for routing.
@@ -887,53 +892,40 @@ function logRoutingDecision(result) {
   }
 }
 
-// Builds a deterministic fallback response from selected routes.
-function buildRouteRegistryResult(payload, selectedRoutes, options) {
-  // Removes internal scoring fields from selected routes.
-  const publicRoutes = selectedRoutes.map(toPublicRoute);
-  // Gets the first selected route as the primary recommendation.
-  const firstRoute = selectedRoutes[0] ?? null;
+// Builds a non-navigating clarification response from the strongest approved candidates.
+function buildUncertainSuggestionResult(payload, candidateRoutes, options) {
+  // Removes duplicates and limits the alternatives shown to the user.
+  const suggestedRoutes = [
+    ...new Map(candidateRoutes.filter(Boolean).map((route) => [route.id, route])).values(),
+  ].slice(0, uncertainSuggestionLimit);
+  // Removes internal scoring fields from suggested routes.
+  const publicRoutes = suggestedRoutes.map(toPublicRoute);
 
-  // Returns a structured result object.
+  // Returns candidates without authorizing automatic navigation.
   return {
-    // Sets this property in the current object.
     recommendationId: createRecommendationId(
-      // Adds this value to the current structure.
       payload,
-      // Assigns the computed value for the current operation.
-      selectedRoutes.map((route) => route.id)
-    // Adds this value to the current structure.
+      suggestedRoutes.map((route) => route.id)
     ),
-    // Sets this property in the current object.
     requestQuery: payload.query,
-    // Sets this property in the current object.
     mode: options.mode,
-    // Sets this property in the current object.
     routingStrategy: options.routingStrategy,
-    // Sets this property in the current object.
     roleKey: payload.roleKey,
-    // Sets this property in the current object.
     recommendedLinkIds: [],
-    // Sets this property in the current object.
     openLinkId: null,
-    // Sets this property in the current object.
-    route: firstRoute ? toPublicRoute(firstRoute) : null,
-    // Sets this property in the current object.
+    route: null,
     routes: publicRoutes,
-    // Sets this property in the current object.
-    openMode: publicRoutes.length > 1 ? "multiple" : "single",
-    // Sets this property in the current object.
-    shouldOpen: queryRequestsOpen(payload.query) && Boolean(firstRoute),
-    // Sets this property in the current object.
+    openMode: "suggestions",
+    shouldOpen: false,
+    requiresClarification: true,
+    clarificationPrompt:
+      options.clarificationPrompt ??
+      "I am not confident enough to open a route automatically. Which of these approved routes did you mean?",
     explanation: options.explanation,
-    // Sets this property in the current object.
     appliedRules: getAppliedRules(payload),
-    // Sets this property in the current object.
     routingDiagnostics: buildRoutingDiagnostics(options),
-    // Spreads these values into the current structure.
     ...(options.backendError ? { backendError: options.backendError } : {}),
   };
-
 }
 
 // Scores one route for candidate retrieval and personalization.
@@ -1357,54 +1349,46 @@ function sanitizeResult(rawResult, payload, candidateRoutes, metadata) {
   const hasValidAiSelection = wantsMultipleRoutes
     ? selectedRoutesFromAi.length >= minimumSelectedRoutes
     : hasValidSingleRouteId || selectedRoutesFromAi.length > 0;
-  // Chooses the approved primary route or strongest fallback candidate.
+  // Treats an explicit low-confidence model decision as unsafe for automatic navigation.
+  const modelIsConfident = rawResult.isConfident !== false;
+  // Returns approved alternatives instead of opening an invalid or uncertain AI selection.
+  if (!hasValidAiSelection || !modelIsConfident) {
+    return buildUncertainSuggestionResult(
+      payload,
+      [...selectedRoutesFromAi, ...(metadata.suggestionRoutes ?? candidateRoutes)],
+      {
+        ...metadata,
+        routingStrategy: hasValidAiSelection
+          ? "uncertain-ai-route-suggestions"
+          : "uncertain-invalid-ai-selection",
+        explanation: hasValidAiSelection
+          ? "The AI found possible approved routes but was not confident enough to open one automatically."
+          : "The AI did not select a valid approved route with enough confidence, so no route was opened.",
+      }
+    );
+  }
+  // Chooses the approved primary route.
   const selectedRoute =
-    // Continues the current operation.
     hasValidSingleRouteId
-      // Continues the current operation.
       ? routesById.get(rawResult.routeId)
-      // Continues the current operation.
-      : selectedRoutesFromAi[0] ?? candidateRoutes[0] ?? null;
-  // Builds the final single-route or multiple-route selection.
-  const selectedRoutes = hasValidAiSelection
-    ? wantsMultipleRoutes
-      ? selectedRoutesFromAi
-      : selectedRoute
-        ? [selectedRoute]
-        : []
-    : wantsMultipleRoutes
-      ? candidateRoutes.slice(0, maxRelatedRoutes)
-      : selectedRoute
-        ? [selectedRoute]
-        : [];
+      : selectedRoutesFromAi[0] ?? null;
+  // Builds the final single-route or multiple-route AI selection.
+  const selectedRoutes = wantsMultipleRoutes
+    ? selectedRoutesFromAi
+    : selectedRoute
+      ? [selectedRoute]
+      : [];
   // Removes internal scoring fields from selected routes.
   const publicRoutes = selectedRoutes.map(toPublicRoute);
-  // Gets the first selected route as the primary recommendation.
-  const firstRoute = selectedRoutes[0] ?? selectedRoute ?? null;
-  // Builds an explanation for an invalid model selection.
-  const fallbackExplanation = firstRoute
-    // Continues the current operation.
-    ? "The AI ranker did not select a valid approved route ID, so the strongest retrieved routeRegistry candidate was used."
-    // Continues the current operation.
-    : "The AI ranker did not select a valid approved route ID and no routeRegistry candidate was available.";
+  // Gets the first approved AI selection as the primary recommendation.
+  const firstRoute = selectedRoutes[0] ?? null;
   // Uses the model explanation or a safe generated explanation.
-  const explanation = hasValidAiSelection
-    // Continues the current operation.
-    ? rawResult.explanation ??
-      // Continues the current operation.
-      (publicRoutes.length > 1
-        // Continues the current operation.
-        ? `The AI ranker matched ${publicRoutes.length} approved routeRegistry routes.`
-        // Continues the current operation.
-        : "The AI ranker matched the request to an approved routeRegistry route.")
-    // Continues the current operation.
-    : fallbackExplanation;
-  // Labels whether the model selection or a fallback was used.
-  const routingStrategy = hasValidAiSelection
-    // Continues the current operation.
-    ? metadata.routingStrategy
-    // Continues the current operation.
-    : "deterministic-invalid-ai-fallback";
+  const explanation = rawResult.explanation ??
+    (publicRoutes.length > 1
+      ? `The AI ranker matched ${publicRoutes.length} approved routeRegistry routes.`
+      : "The AI ranker matched the request to an approved routeRegistry route.");
+  // Preserves the successful model routing strategy.
+  const routingStrategy = metadata.routingStrategy;
 
   // Returns a structured result object.
   return {
@@ -1441,7 +1425,7 @@ function sanitizeResult(rawResult, payload, candidateRoutes, metadata) {
     // Sets this property in the current object.
     appliedRules:
       // Adds this value to the current structure.
-      hasValidAiSelection && Array.isArray(rawResult.appliedRules) ? rawResult.appliedRules : [],
+      Array.isArray(rawResult.appliedRules) ? rawResult.appliedRules : [],
     // Sets this property in the current object.
     routingDiagnostics: buildRoutingDiagnostics({
       // Spreads these values into the current structure.
@@ -1576,6 +1560,8 @@ async function askOllama(payload, candidateRoutes, metadata) {
     properties: {
       // Sets this property in the current object.
       shouldOpen: { type: "boolean" },
+      // Records whether the model considers its route selection unambiguous.
+      isConfident: { type: "boolean" },
       // Sets this property in the current object.
       requestScope: {
         // Sets this property in the current object.
@@ -1601,6 +1587,8 @@ async function askOllama(payload, candidateRoutes, metadata) {
     required: [
       // Adds an instruction or value to the current structure.
       "shouldOpen",
+      // Adds an instruction or value to the current structure.
+      "isConfident",
       // Adds an instruction or value to the current structure.
       "requestScope",
       // Adds an instruction or value to the current structure.
@@ -1670,9 +1658,9 @@ async function askOllama(payload, candidateRoutes, metadata) {
             // Adds an instruction or value to the current structure.
             "Treat relevant expert rules as explicit instructions and personalization as a preference, while prioritizing the user's current request.",
             // Adds an instruction or value to the current structure.
-            "Always choose the closest candidate route when no candidate is a perfect match.",
+            "Set isConfident to true only when the selected route or route set clearly and directly satisfies the request.",
             // Adds an instruction or value to the current structure.
-            "Do not answer that none of the routes are relevant.",
+            "When the request is ambiguous, several candidates are similarly plausible, or no candidate directly fits, set isConfident to false and return the best possible candidate IDs as suggestions.",
             // Adds an instruction or value to the current structure.
             "Never invent route IDs, URLs, weather values, or operational decisions.",
             // Adds an instruction or value to the current structure.
@@ -1680,7 +1668,7 @@ async function askOllama(payload, candidateRoutes, metadata) {
             // Adds an instruction or value to the current structure.
             "If the user only asks for information, choose the best route but set shouldOpen to false.",
             // Adds an instruction or value to the current structure.
-            "Return only shouldOpen, requestScope, routeId, and routeIds as JSON following the schema exactly.",
+            "Return only shouldOpen, isConfident, requestScope, routeId, and routeIds as JSON following the schema exactly.",
           // Adds this value to the current structure.
           ].join(" "),
         },
@@ -1746,6 +1734,7 @@ async function askOllama(payload, candidateRoutes, metadata) {
     !rawResult ||
     typeof rawResult !== "object" ||
     typeof rawResult.shouldOpen !== "boolean" ||
+    typeof rawResult.isConfident !== "boolean" ||
     !["single", "multiple"].includes(rawResult.requestScope) ||
     !Array.isArray(rawResult.routeIds)
   ) {
@@ -1793,6 +1782,7 @@ async function answerAssistantRequestUncached(payload, startedAt) {
       return await askPytorchRanker(payload, {
         startedAt,
         scoreSummary,
+        suggestionRoutes: matchedRoutes.length > 0 ? matchedRoutes : scoredRoutes,
       });
     // Handles an unavailable or uncertain specialised-model decision.
     } catch (error) {
@@ -1802,22 +1792,19 @@ async function answerAssistantRequestUncached(payload, startedAt) {
       // Avoids calling Qwen when strict PyTorch-only mode is configured.
       if (routingProvider === "pytorch") {
         const fallbackSourceRoutes = matchedRoutes.length > 0 ? matchedRoutes : scoredRoutes;
-        const fallbackRoutes = explicitMultipleRoutes
-          ? fallbackSourceRoutes.slice(0, maxRelatedRoutes)
-          : fallbackSourceRoutes.slice(0, 1);
 
-        // Returns an emergency registry result when the specialised service cannot decide.
-        return buildRouteRegistryResult(payload, fallbackRoutes, {
-          mode: "deterministic-route-registry",
-          routingStrategy: "deterministic-pytorch-fallback",
+        // Returns selectable alternatives when the specialised service cannot decide.
+        return buildUncertainSuggestionResult(payload, fallbackSourceRoutes, {
+          mode: "route-suggestions",
+          routingStrategy: "uncertain-pytorch-suggestions",
           qwenCalled: false,
           qwenCandidateCount: routeRegistry.length,
           startedAt,
           scoreSummary,
           backendError: `PyTorch routing failed: ${error.message}`,
-          explanation: fallbackRoutes.length > 0
-            ? "The specialised PyTorch ranker was unavailable or uncertain, so emergency routeRegistry scoring was used."
-            : "The specialised PyTorch ranker was unavailable or uncertain and no fallback route was found.",
+          explanation: fallbackSourceRoutes.length > 0
+            ? "The specialised PyTorch ranker was unavailable or uncertain, so no route was opened automatically."
+            : "The specialised PyTorch ranker was unavailable or uncertain and no possible route was found.",
         });
       }
     }
@@ -1847,18 +1834,14 @@ async function answerAssistantRequestUncached(payload, startedAt) {
     });
   // Handles an error from the preceding operation.
   } catch (error) {
-    // Returns several retrieved routes for broad requests and one route for specific requests.
+    // Uses retrieved routes only as user-selectable alternatives.
     const fallbackSourceRoutes = matchedRoutes.length > 0 ? matchedRoutes : candidateRoutes;
-    // Selects the fallback route count that matches the user's requested scope.
-    const fallbackRoutes = explicitMultipleRoutes
-      ? fallbackSourceRoutes.slice(0, maxRelatedRoutes)
-      : fallbackSourceRoutes.slice(0, 1);
-    // Returns the computed result to the caller.
-    return buildRouteRegistryResult(payload, fallbackRoutes, {
+    // Returns alternatives without authorizing automatic navigation.
+    return buildUncertainSuggestionResult(payload, fallbackSourceRoutes, {
       // Sets this property in the current object.
-      mode: "deterministic-route-registry",
+      mode: "route-suggestions",
       // Sets this property in the current object.
-      routingStrategy: "deterministic-qwen-fallback",
+      routingStrategy: "uncertain-ai-suggestions",
       // Sets this property in the current object.
       qwenCalled: true,
       // Sets this property in the current object.
@@ -1870,14 +1853,12 @@ async function answerAssistantRequestUncached(payload, startedAt) {
       // Sets this property in the current object.
       backendError: [
         rankerError ? `PyTorch ranker did not handle the request: ${rankerError.message}` : null,
-        `Qwen routing failed, so deterministic routeRegistry scoring was used: ${error.message}`,
+        `Qwen routing failed: ${error.message}`,
       ].filter(Boolean).join(" "),
       // Sets this property in the current object.
-      explanation: fallbackRoutes.length > 0
-        ? explicitMultipleRoutes
-          ? `Qwen did not return a valid multiple-route selection, so ${fallbackRoutes.length} retrieved routeRegistry matches were used as an emergency fallback.`
-          : "Qwen did not return a valid route selection, so the strongest retrieved routeRegistry match was used as an emergency fallback."
-        : "Qwen did not return a valid route selection and no routeRegistry fallback was available.",
+      explanation: fallbackSourceRoutes.length > 0
+        ? "The routing models could not confidently confirm an approved route, so no route was opened automatically."
+        : "The routing models could not confidently confirm an approved route and no possible route was found.",
     });
   }
 }
@@ -1975,6 +1956,8 @@ const server = http.createServer(async (request, response) => {
         broadQwenCandidateLimit,
         // Adds this value to the current structure.
         maxRelatedRoutes,
+        // Adds this value to the current structure.
+        uncertainSuggestionLimit,
         // Adds this value to the current structure.
         assistantCacheTtlMs,
         // Adds this value to the current structure.

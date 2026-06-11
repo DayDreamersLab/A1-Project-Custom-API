@@ -234,6 +234,41 @@ export async function submitAssistantFeedback(feedbackRecord) {
   }
 }
 
+export async function submitSelectionEvidence(selectionEvidenceRecord) {
+  const selectionUrl = `${getAssistantApiBaseUrl()}/selection`;
+
+  try {
+    const response = await fetchWithTimeout(selectionUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selectionEvidenceRecord),
+    }, 10000);
+    return readJsonResponse(response);
+  } catch (error) {
+    console.warn("Could not submit route-selection evidence:", error);
+    return {
+      ok: false,
+      error: describeAssistantApiError(error, selectionUrl),
+    };
+  }
+}
+
+export function createSelectionEvidenceRecord({ query, roleKey, result, selectedRoute, userId }) {
+  const recommendationQuery = result.requestQuery ?? query;
+
+  return {
+    id: crypto.randomUUID(),
+    recommendationId: result.recommendationId,
+    userId,
+    query: recommendationQuery,
+    roleKey,
+    evidenceType: "clarification-selection",
+    selectedRouteId: selectedRoute.id,
+    suggestedRouteIds: (result.routes ?? []).map((route) => route.id).filter(Boolean),
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export function createFeedbackRecord({ query, roleKey, result, rating, userId }) {
   const recommendationQuery = result.requestQuery ?? query;
 

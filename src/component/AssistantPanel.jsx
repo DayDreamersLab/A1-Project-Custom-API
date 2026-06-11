@@ -422,8 +422,9 @@ export default function AssistantPanel({
               {recommendedRoutes.map((route) =>
                 requiresClarification ? (
                   <label
-                    className={`assistant-route-card assistant-route-option${selectedSuggestionIds.has(route.id) ? " is-selected" : ""}`}
+                    className={`assistant-route-card assistant-route-option${selectedSuggestionIds.has(route.id) ? " is-selected" : ""}${isSubmittingSelection || hasRecordedCurrentSelection ? " is-disabled" : ""}`}
                     key={route.id}
+                    aria-disabled={isSubmittingSelection || hasRecordedCurrentSelection}
                   >
                     <input
                       type="checkbox"

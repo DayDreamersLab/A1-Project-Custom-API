@@ -294,3 +294,16 @@ the selected IDs from its own approved registry.
   threshold.
 - This is a navigation aid. It must not make flight-safety or operational
   decisions on behalf of pilots, ATC, or dispatchers.
+
+
+$body = @{
+    query = "What is the current ATIS?"
+    maxRoutes = 8
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8001/rank" `
+  -ContentType "application/json" `
+  -Body $body |
+  ConvertTo-Json -Depth 10

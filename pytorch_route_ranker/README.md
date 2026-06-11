@@ -141,6 +141,34 @@ paraphrases, abbreviations, exclusions, and examples where similar wording
 should produce different results. Do not train automatically from a merely
 `helpful` click; collect a corrected expected route selection first.
 
+### Reviewable Interaction Evidence
+
+Every new clarification response is automatically exported to:
+
+```text
+pytorch_route_ranker/data/reviewable_interaction_evidence.jsonl
+```
+
+The file is a pending-review queue, not training data. A selected route is
+stored as a proposed label that must be verified. A `none-match` response is
+stored without proposed relevant routes so a reviewer can assign the correct
+answer. User IDs are deliberately excluded, and the file is ignored by Git
+because queries may be confidential.
+
+Run this command to backfill or rebuild missing queue entries from the current
+personalization store:
+
+```bash
+npm run ranker:export-evidence
+```
+
+Each record includes `reviewStatus`, `reviewNotes`, `approvedScope`, and
+`approvedRelevantRouteIds` review fields. The automatic exporter preserves
+those fields on later exports. Change `reviewStatus` from `pending` to
+`approved` only after verifying the query, scope, and routes. Approved records
+can later be converted into training examples through a separate controlled
+import step.
+
 ## 4. Train And Evaluate
 
 ```bash
@@ -296,31 +324,3 @@ the selected IDs from its own approved registry.
   threshold.
 - This is a navigation aid. It must not make flight-safety or operational
   decisions on behalf of pilots, ATC, or dispatchers.
-
-$body = @{
-  model = "qwen3:0.6b"
-  stream = $false
-  think = $false
-  format = @{
-    type = "object"
-    properties = @{
-      routeId = @{
-        enum = @("current-atis", $null)
-      }
-    }
-    required = @("routeId")
-  }
-  messages = @(
-    @{
-      role = "user"
-      content = "Return current-atis"
-    }
-  )
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:11434/api/chat" `
-  -ContentType "application/json" `
-  -Body $body |
-  ConvertTo-Json -Depth 10

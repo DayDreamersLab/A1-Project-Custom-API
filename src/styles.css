@@ -657,10 +657,20 @@ h3 {
   transition: border-color 160ms ease, background 160ms ease;
 }
 
-.assistant-route-option:hover,
+.assistant-route-option:not(.is-disabled):hover,
 .assistant-route-option.is-selected {
   border-color: var(--primary);
   background: var(--surface-active);
+}
+
+.assistant-route-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.assistant-route-option.is-disabled.is-selected {
+  border-color: var(--line);
+  background: var(--surface-muted);
 }
 
 .assistant-route-option input {

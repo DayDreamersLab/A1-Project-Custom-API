@@ -102,6 +102,12 @@ const selectionTopicDelta = 0.25;
 const maximumRoutePreferenceScore = 6;
 // Bounds learned topic preference scores so repeated choices cannot dominate routing.
 const maximumTopicPreferenceScore = 12;
+// Requires repeated positive evidence before a route becomes explicitly preferred.
+const preferredRouteThreshold = 2;
+// Requires repeated negative evidence before a route becomes explicitly avoided.
+const avoidedRouteThreshold = -2;
+// Requires repeated topic evidence before a topic becomes an active preference.
+const frequentTopicThreshold = 1;
 // Creates a registry fingerprint used when building cache keys.
 const routeRegistryVersion = createHash("sha256")
   // Adds normalized data to the hash input.
@@ -415,6 +421,8 @@ function ensureProfile(store, userId = defaultUserId, roleKey = "unknown-role") 
   store.profiles[key].recentQueries ??= [];
   store.profiles[key].feedbackCount ??= 0;
   store.profiles[key].selectionEvidenceCount ??= 0;
+  // Rebuilds derived lists using the current evidence thresholds.
+  updateProfileLists(store.profiles[key]);
 
   // Returns the computed result to the caller.
   return store.profiles[key];
@@ -427,7 +435,7 @@ function updateProfileLists(profile) {
   // Assigns the computed value for the current operation.
   profile.preferredRouteIds = routeScoreEntries
     // Keeps only entries that satisfy this condition.
-    .filter(([, score]) => score > 0)
+    .filter(([, score]) => score >= preferredRouteThreshold)
     // Sorts entries into the required order.
     .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
     // Limits the current value to the required size.
@@ -437,7 +445,7 @@ function updateProfileLists(profile) {
   // Assigns the computed value for the current operation.
   profile.avoidedRouteIds = routeScoreEntries
     // Keeps only entries that satisfy this condition.
-    .filter(([, score]) => score < 0)
+    .filter(([, score]) => score <= avoidedRouteThreshold)
     // Sorts entries into the required order.
     .sort(([, scoreA], [, scoreB]) => scoreA - scoreB)
     // Limits the current value to the required size.
@@ -447,7 +455,7 @@ function updateProfileLists(profile) {
   // Assigns the computed value for the current operation.
   profile.frequentTopics = Object.entries(profile.topicScores ?? {})
     // Keeps only entries that satisfy this condition.
-    .filter(([, score]) => score > 0)
+    .filter(([, score]) => score >= frequentTopicThreshold)
     // Sorts entries into the required order.
     .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
     // Limits the current value to the required size.
@@ -702,7 +710,7 @@ function processFeedback(payload) {
   return operation;
 }
 
-// Applies one small, deduplicated personalization signal from an uncertain suggestion choice.
+// Applies one small, deduplicated personalization signal from an uncertain clarification response.
 async function processSelectionEvidenceTransaction(payload) {
   // Loads the current personalization store.
   const store = await readPersonalizationStore();
@@ -712,21 +720,37 @@ async function processSelectionEvidenceTransaction(payload) {
   const userId = payload.userId || defaultUserId;
   // Uses the supplied role key or an unknown-role fallback.
   const roleKey = payload.roleKey || "unknown-role";
-  // Reads the route the user explicitly chose.
-  const selectedRouteId = payload.selectedRouteId;
-  // Rejects missing or unapproved route IDs.
-  if (!selectedRouteId || !routeRegistry.some((route) => route.id === selectedRouteId)) {
-    throw new Error("Selection evidence must reference one approved routeRegistry ID.");
-  }
-
   // Keeps only approved routes that were actually offered in the clarification.
   const suggestedRouteIds = unique(payload.suggestedRouteIds ?? []).filter((routeId) =>
     routeRegistry.some((route) => route.id === routeId)
   );
-  // Rejects choices that were not part of the shown suggestion set.
-  if (!suggestedRouteIds.includes(selectedRouteId)) {
-    throw new Error("The selected route was not part of the approved clarification suggestions.");
+  // Rejects evidence without an approved suggestion set.
+  if (suggestedRouteIds.length === 0) {
+    throw new Error("Selection evidence must reference approved clarification suggestions.");
   }
+  // Normalizes the user's clarification response.
+  const outcome = payload.outcome === "none-match" ? "none-match" : "selected";
+  // Reads every route ID the user submitted as selected.
+  const requestedSelectedRouteIds = unique(
+    payload.selectedRouteIds ?? (payload.selectedRouteId ? [payload.selectedRouteId] : [])
+  );
+  // Rejects route IDs that were not part of the shown suggestion set.
+  if (requestedSelectedRouteIds.some((routeId) => !suggestedRouteIds.includes(routeId))) {
+    throw new Error("Selected routes must come from the approved clarification suggestions.");
+  }
+  // Uses the validated selected route IDs.
+  const selectedRouteIds = requestedSelectedRouteIds;
+  // Rejects incomplete selected-route responses.
+  if (outcome === "selected" && selectedRouteIds.length === 0) {
+    throw new Error("Select at least one approved clarification route.");
+  }
+  // Rejects inconsistent none-match responses.
+  if (outcome === "none-match" && selectedRouteIds.length > 0) {
+    throw new Error("A none-match clarification response cannot include selected routes.");
+  }
+  // Infers the user's corrected single-versus-multiple request scope.
+  const correctedScope =
+    outcome === "selected" ? (selectedRouteIds.length > 1 ? "multiple" : "single") : null;
 
   // Recomputes the stable suggestion-set identity instead of trusting a client-generated ID.
   const recommendationId = createRecommendationId(payload, suggestedRouteIds);
@@ -756,18 +780,28 @@ async function processSelectionEvidenceTransaction(payload) {
     };
   }
 
-  // Adds weak route evidence and bounds the accumulated preference score.
-  profile.routeScores[selectedRouteId] = clamp(
-    (profile.routeScores[selectedRouteId] ?? 0) + selectionRouteDelta,
-    -maximumRoutePreferenceScore,
-    maximumRoutePreferenceScore
-  );
-  // Infers only a small number of topics from the chosen route and query.
-  const topics = inferFeedbackTopics(payload.query, [selectedRouteId]).slice(0, 6);
+  // Distributes one fixed route-evidence budget across every selected route.
+  const routeDeltaPerRoute =
+    selectedRouteIds.length > 0 ? selectionRouteDelta / selectedRouteIds.length : 0;
+  // Adds weak route evidence and bounds every accumulated preference score.
+  selectedRouteIds.forEach((routeId) => {
+    profile.routeScores[routeId] = clamp(
+      (profile.routeScores[routeId] ?? 0) + routeDeltaPerRoute,
+      -maximumRoutePreferenceScore,
+      maximumRoutePreferenceScore
+    );
+  });
+  // Infers only a small number of topics from the chosen routes and query.
+  const topics =
+    outcome === "selected"
+      ? inferFeedbackTopics(payload.query, selectedRouteIds).slice(0, 6)
+      : [];
+  // Distributes one fixed topic-evidence budget across inferred topics.
+  const topicDeltaPerTopic = topics.length > 0 ? selectionTopicDelta / topics.length : 0;
   // Adds weak topic evidence and bounds each accumulated topic score.
   topics.forEach((topic) => {
     profile.topicScores[topic] = clamp(
-      (profile.topicScores[topic] ?? 0) + selectionTopicDelta,
+      (profile.topicScores[topic] ?? 0) + topicDeltaPerTopic,
       0,
       maximumTopicPreferenceScore
     );
@@ -777,8 +811,10 @@ async function processSelectionEvidenceTransaction(payload) {
   profile.recentQueries = [
     {
       query: payload.query,
-      evidenceType: "clarification-selection",
-      selectedRouteId,
+      evidenceType: outcome === "none-match" ? "clarification-none-match" : "clarification-selection",
+      outcome,
+      correctedScope,
+      selectedRouteIds,
       suggestedRouteIds,
       timestamp,
     },
@@ -798,10 +834,14 @@ async function processSelectionEvidenceTransaction(payload) {
     roleKey,
     recommendationId,
     query: payload.query,
-    selectedRouteId,
+    outcome,
+    correctedScope,
+    selectedRouteIds,
     suggestedRouteIds,
-    routeDelta: selectionRouteDelta,
-    topicDelta: selectionTopicDelta,
+    totalRouteDelta: outcome === "selected" ? selectionRouteDelta : 0,
+    routeDeltaPerRoute,
+    totalTopicDelta: outcome === "selected" ? selectionTopicDelta : 0,
+    topicDeltaPerTopic,
     topics,
     timestamp,
   };
@@ -824,10 +864,14 @@ async function processSelectionEvidenceTransaction(payload) {
     selectionEvidenceRecord,
     profile,
     profileDelta: {
-      selectedRouteId,
-      routeDelta: selectionRouteDelta,
+      outcome,
+      correctedScope,
+      selectedRouteIds,
+      totalRouteDelta: outcome === "selected" ? selectionRouteDelta : 0,
+      routeDeltaPerRoute,
       topics,
-      topicDelta: selectionTopicDelta,
+      totalTopicDelta: outcome === "selected" ? selectionTopicDelta : 0,
+      topicDeltaPerTopic,
     },
   };
 }
@@ -2167,6 +2211,12 @@ const server = http.createServer(async (request, response) => {
         selectionTopicDelta,
         // Adds this value to the current structure.
         maximumRoutePreferenceScore,
+        // Adds this value to the current structure.
+        preferredRouteThreshold,
+        // Adds this value to the current structure.
+        avoidedRouteThreshold,
+        // Adds this value to the current structure.
+        frequentTopicThreshold,
         // Adds this value to the current structure.
         assistantCacheTtlMs,
         // Adds this value to the current structure.

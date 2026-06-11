@@ -106,6 +106,7 @@ def main() -> None:
                     "predictedRouteIds": sorted(selected_ids),
                     "confidence": result.confidence,
                     "needsFallback": result.needsFallback,
+                    "fallbackReasons": result.fallbackReasons,
                 }
             )
 

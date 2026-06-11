@@ -2,7 +2,9 @@ import { useState } from "react";
 import {
   askAssistant,
   createFeedbackRecord,
+  createSelectionEvidenceRecord,
   submitAssistantFeedback,
+  submitSelectionEvidence,
 } from "../services/assistantEngine";
 import {
   queryRequestsAllRelated,
@@ -82,8 +84,10 @@ export default function AssistantPanel({
   const [result, setResult] = useState(null);
   const [feedbackLog, setFeedbackLog] = useState([]);
   const [feedbackDecisions, setFeedbackDecisions] = useState(() => new Map());
+  const [selectionDecisions, setSelectionDecisions] = useState(() => new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [isSubmittingSelection, setIsSubmittingSelection] = useState(false);
   const [notice, setNotice] = useState("");
 
   const recommendedRoutes = getRecommendedRoutes(result);
@@ -97,6 +101,9 @@ export default function AssistantPanel({
     : null;
   const hasRatedCurrentRecommendation =
     Boolean(currentFeedbackDecision);
+  const currentSelectionDecision = currentRecommendationKey
+    ? selectionDecisions.get(currentRecommendationKey)
+    : null;
 
   async function handleAsk(event) {
     event.preventDefault();
@@ -227,6 +234,67 @@ export default function AssistantPanel({
     }
   }
 
+  async function handleSuggestionSelection(route) {
+    // Opens synchronously from the user's click so browsers do not treat it as a popup.
+    const opened = onOpenLink(route);
+
+    const recommendationKey = getRecommendationKey(result, query, roleKey);
+    if (
+      !result ||
+      !recommendationKey ||
+      !requiresClarification ||
+      isSubmittingSelection ||
+      selectionDecisions.has(recommendationKey)
+    ) {
+      return;
+    }
+
+    const selectionEvidenceRecord = createSelectionEvidenceRecord({
+      query,
+      userId,
+      roleKey,
+      result,
+      selectedRoute: route,
+    });
+
+    setSelectionDecisions((currentDecisions) => {
+      const nextDecisions = new Map(currentDecisions);
+      nextDecisions.set(recommendationKey, route.id);
+      return nextDecisions;
+    });
+    setIsSubmittingSelection(true);
+
+    try {
+      const response = await submitSelectionEvidence(selectionEvidenceRecord);
+      if (response.ok && response.profile) {
+        const recordedRouteId =
+          response.selectionEvidenceRecord?.selectedRouteId ?? route.id;
+        setSelectionDecisions((currentDecisions) => {
+          const nextDecisions = new Map(currentDecisions);
+          nextDecisions.set(recommendationKey, recordedRouteId);
+          return nextDecisions;
+        });
+        onProfileUpdated(response.profile);
+        setNotice(
+          response.duplicate
+            ? `This clarification choice was already recorded. Personalization was not changed again.${opened ? "" : " The browser also blocked the route from opening."}`
+            : `Choice recorded as bounded personalization evidence (+${response.profileDelta?.routeDelta ?? 0.5} for ${route.title}).${opened ? "" : " The browser blocked the route from opening."}`
+        );
+      } else if (response.error) {
+        setSelectionDecisions((currentDecisions) => {
+          const nextDecisions = new Map(currentDecisions);
+          nextDecisions.delete(recommendationKey);
+          return nextDecisions;
+        });
+        setNotice(
+          `${opened ? "The route opened" : "The browser blocked the route from opening"}, but its personalization evidence was not saved: ${response.error}`
+        );
+      }
+    } finally {
+      setIsSubmittingSelection(false);
+    }
+  }
+
   function handleShowAll() {
     const displayedCount = onShowRoutes(recommendedRoutes);
     if (displayedCount < recommendedRoutes.length) {
@@ -276,6 +344,9 @@ export default function AssistantPanel({
               ? userProfile.frequentTopics.slice(0, 4).join(", ")
               : "none yet"}
           </p>
+          <p>
+            Clarification choices recorded: {userProfile.selectionEvidenceCount ?? 0}
+          </p>
         </section>
       )}
 
@@ -313,8 +384,22 @@ export default function AssistantPanel({
                     <strong>{route.title}</strong>
                     <p>{route.description}</p>
                   </div>
-                  <button type="button" onClick={() => onOpenLink(route)}>
-                    {requiresClarification ? "Choose and open" : "Open"}
+                  <button
+                    type="button"
+                    disabled={
+                      requiresClarification && isSubmittingSelection
+                    }
+                    onClick={() =>
+                      requiresClarification
+                        ? handleSuggestionSelection(route)
+                        : onOpenLink(route)
+                    }
+                  >
+                    {requiresClarification && currentSelectionDecision === route.id
+                      ? "Chosen"
+                      : requiresClarification
+                        ? "Choose and open"
+                        : "Open"}
                   </button>
                 </article>
               ))}

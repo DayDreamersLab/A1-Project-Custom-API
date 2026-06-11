@@ -280,7 +280,9 @@ Content-Type: application/json
 ```
 
 The response includes `routeId`, `routeIds`, `requestScope`, `confidence`,
-`needsFallback`, and diagnostic scores. Although the Python response includes
+`needsFallback`, `fallbackReasons`, and diagnostic scores. `fallbackReasons`
+distinguishes low route confidence from uncertain single/multiple scope,
+missing selections, and insufficient multiple-route selections. Although the Python response includes
 route metadata for testing, the Node gateway ignores its paths and resolves
 the selected IDs from its own approved registry.
 
@@ -294,7 +296,6 @@ the selected IDs from its own approved registry.
   threshold.
 - This is a navigation aid. It must not make flight-safety or operational
   decisions on behalf of pilots, ATC, or dispatchers.
-
 
 $body = @{
   model = "qwen3:0.6b"

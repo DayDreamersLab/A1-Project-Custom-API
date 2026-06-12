@@ -23,6 +23,7 @@ def parse_args():
         default=[
             RANKER_ROOT / "data" / "generated_training_examples.jsonl",
             RANKER_ROOT / "data" / "expert_training_examples.jsonl",
+            RANKER_ROOT / "data" / "hard_example_training_data.jsonl",
         ],
     )
     parser.add_argument("--output", type=Path, default=RANKER_ROOT / "models" / "route_ranker.pt")
@@ -83,6 +84,16 @@ def portable_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
         name: parameter.detach().cpu()
         for name, parameter in model.state_dict().items()
     }
+
+
+def parameter_counts(model: nn.Module) -> tuple[int, int]:
+    total_parameters = sum(parameter.numel() for parameter in model.parameters())
+    trainable_parameters = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
+    return total_parameters, trainable_parameters
 
 
 def load_examples(paths: list[Path], valid_route_ids: set[str]) -> list[dict]:
@@ -173,6 +184,11 @@ def main() -> None:
     validation_scope = validation_scope.to(device)
 
     model = AmidsRouteRanker(args.feature_dimension, args.hidden_dimension).to(device)
+    total_parameter_count, trainable_parameter_count = parameter_counts(model)
+    print(
+        f"totalParameters={total_parameter_count} "
+        f"trainableParameters={trainable_parameter_count}"
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=args.learning_rate,
@@ -224,6 +240,8 @@ def main() -> None:
             "training_example_count": len(examples),
             "training_device": describe_device(device),
             "torch_version": str(torch.__version__),
+            "total_parameter_count": total_parameter_count,
+            "trainable_parameter_count": trainable_parameter_count,
         },
         args.output,
     )

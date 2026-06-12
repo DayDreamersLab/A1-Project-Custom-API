@@ -25,6 +25,7 @@ SUMMARY_FIELDS = [
     "routeCount",
     "generatedExamples",
     "expertExamples",
+    "hardExamples",
     "testExamples",
     "epochs",
     "batchSize",
@@ -32,6 +33,8 @@ SUMMARY_FIELDS = [
     "featureDimension",
     "hiddenDimension",
     "trainingDevice",
+    "totalParameters",
+    "trainableParameters",
     "seed",
     "scopeAccuracy",
     "topRouteAccuracy",
@@ -193,6 +196,7 @@ def snapshot_source(source_directory: Path) -> None:
         "evaluate.py",
         "generate_training_data.py",
         "manage_model.py",
+        "generate_hard_examples.py",
         "run_experiment.py",
         "train.py",
     ]:
@@ -242,9 +246,10 @@ def main() -> None:
     held_out_test = args.held_out_test.resolve()
     generated_data = DATA_ROOT / "generated_training_examples.jsonl"
     expert_data = DATA_ROOT / "expert_training_examples.jsonl"
+    hard_data = DATA_ROOT / "hard_example_training_data.jsonl"
     exported_registry = DATA_ROOT / "route_registry.json"
 
-    if held_out_test in {generated_data.resolve(), expert_data.resolve()}:
+    if held_out_test in {generated_data.resolve(), expert_data.resolve(), hard_data.resolve()}:
         raise ValueError("The held-out test file must never also be used as training data.")
 
     RUNS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -297,15 +302,19 @@ def main() -> None:
         snapshot_registry = snapshot_directory / "route_registry.json"
         snapshot_generated = snapshot_directory / "generated_training_examples.jsonl"
         snapshot_expert = snapshot_directory / "expert_training_examples.jsonl"
+        snapshot_hard = snapshot_directory / "hard_example_training_data.jsonl"
         snapshot_test = snapshot_directory / "held_out_test.jsonl"
         copy_required(exported_registry, snapshot_registry)
         copy_required(generated_data, snapshot_generated)
         has_expert_data = copy_optional(expert_data, snapshot_expert)
+        has_hard_data = copy_optional(hard_data, snapshot_hard)
         copy_required(held_out_test, snapshot_test)
 
         training_data = [snapshot_generated]
         if has_expert_data and line_count(snapshot_expert) > 0:
             training_data.append(snapshot_expert)
+        if has_hard_data and line_count(snapshot_hard) > 0:
+            training_data.append(snapshot_hard)
 
         registry = load_registry(snapshot_registry)
         data_manifest = {
@@ -350,8 +359,19 @@ def main() -> None:
         ]
         training_output = run_and_tee(training_command, run_directory / "training-log.txt")
         training_device_match = re.search(r"^trainingDevice=(.+?) requestedDevice=", training_output, re.MULTILINE)
+        parameter_count_match = re.search(
+            r"^totalParameters=(\d+) trainableParameters=(\d+)$",
+            training_output,
+            re.MULTILINE,
+        )
         configuration["training"]["selectedDevice"] = (
             training_device_match.group(1) if training_device_match else "unknown"
+        )
+        configuration["training"]["totalParameters"] = (
+            int(parameter_count_match.group(1)) if parameter_count_match else None
+        )
+        configuration["training"]["trainableParameters"] = (
+            int(parameter_count_match.group(2)) if parameter_count_match else None
         )
 
         evaluation_env = os.environ.copy()
@@ -444,6 +464,7 @@ def main() -> None:
                 "routeCount": configuration.get("routeCount", ""),
                 "generatedExamples": line_count(snapshot_directory / "generated_training_examples.jsonl"),
                 "expertExamples": line_count(snapshot_directory / "expert_training_examples.jsonl"),
+                "hardExamples": line_count(snapshot_directory / "hard_example_training_data.jsonl"),
                 "testExamples": line_count(snapshot_directory / "held_out_test.jsonl"),
                 "epochs": args.epochs,
                 "batchSize": args.batch_size,
@@ -451,6 +472,10 @@ def main() -> None:
                 "featureDimension": args.feature_dimension,
                 "hiddenDimension": args.hidden_dimension,
                 "trainingDevice": configuration.get("training", {}).get("selectedDevice", ""),
+                "totalParameters": configuration.get("training", {}).get("totalParameters", ""),
+                "trainableParameters": configuration.get("training", {}).get(
+                    "trainableParameters", ""
+                ),
                 "seed": args.seed,
                 **metrics,
             }

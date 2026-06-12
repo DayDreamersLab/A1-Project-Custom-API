@@ -169,6 +169,94 @@ those fields on later exports. Change `reviewStatus` from `pending` to
 can later be converted into training examples through a separate controlled
 import step.
 
+### Generate Hard Examples From Approved Corrections
+
+Approved interaction corrections can be expanded into a small, controlled set
+of semantically equivalent training queries using a local Ollama model:
+
+```bash
+npm run ranker:export
+npm run ranker:export-evidence
+npm run ranker:generate-hard-examples
+```
+
+The first command refreshes `route_registry.json` from the actual
+`routeRegistry.js`; the generator therefore uses the IDs, titles,
+descriptions, and keywords from the active AMIDS registry. Route paths are
+retained in the local registry but are never sent to the LLM.
+
+The command reads only evidence records whose `reviewStatus` is `approved` and
+whose `approvedScope` and `approvedRelevantRouteIds` are valid. The local LLM
+is allowed to write paraphrases, but it is never allowed to choose or alter the
+approved labels.
+
+For each approved correction, the pipeline:
+
+1. retains the original real failed query as an
+   `approved-interaction-correction`;
+2. asks the local LLM for 30 varied candidate paraphrases;
+3. rejects candidates that change explicit single/multiple scope, lose
+   important time or exclusion qualifiers, contain URLs or internal-style
+   route IDs, or duplicate existing queries;
+4. asks the local LLM a second time to strictly verify semantic equivalence;
+5. retains at most 15 accepted `synthetic-hard-example` paraphrases.
+
+Select a local model through an environment variable:
+
+```bash
+HARD_EXAMPLE_LLM_MODEL=qwen3:8b npm run ranker:generate-hard-examples
+```
+
+Optionally use a stronger local model for the semantic review pass:
+
+```bash
+HARD_EXAMPLE_LLM_MODEL=qwen3:1.7b \
+HARD_EXAMPLE_VALIDATOR_MODEL=qwen3:8b \
+npm run ranker:generate-hard-examples
+```
+
+Windows PowerShell:
+
+```powershell
+$env:HARD_EXAMPLE_LLM_MODEL="qwen3:8b"
+npm run ranker:generate-hard-examples
+```
+
+Inspect the approved evidence and planned work without calling Ollama or
+writing files:
+
+```bash
+npm run ranker:generate-hard-examples -- --dry-run
+```
+
+Process one correction or adjust the controlled limits:
+
+```bash
+npm run ranker:generate-hard-examples -- \
+  --evidence-id correction-id \
+  --generate-count 30 \
+  --max-paraphrases 15
+```
+
+The resulting files are:
+
+```text
+pytorch_route_ranker/data/hard_example_training_data.jsonl
+pytorch_route_ranker/data/hard_example_training_manifest.json
+```
+
+Both are ignored by Git because they may contain confidential user queries.
+The manifest records generation counts, rejected candidates, registry
+fingerprint, model, and local inference timings. The generated JSONL dataset is
+automatically included by `ranker:train` and snapshotted by
+`ranker:experiment`.
+
+Do not normally use `--skip-semantic-validation`. It exists for controlled
+diagnostics, but omitting the second review pass increases the risk that a
+paraphrase changes the intended route, scope, location, time meaning, or
+exclusion. If an approval is revoked or the route registry fingerprint
+changes, the associated generated hard examples are removed on the next run.
+
 ## 4. Train And Evaluate
 
 ```bash
@@ -191,6 +279,17 @@ The model, route vectors, training targets, validation targets, loss weights,
 and batch indices are moved onto the selected device. Checkpoints store the
 training-device description but save model weights on CPU so they remain
 portable to the lower-powered inference machine.
+
+Training also displays and records both model-size counts:
+
+```text
+totalParameters=1639682 trainableParameters=1639682
+```
+
+`totalParameters` counts every model parameter. `trainableParameters` counts
+only parameters whose `requires_grad` value allows the optimizer to update
+them. Experiment configurations and `summary.csv` preserve both values, while
+`npm run ranker:status` displays them for the active checkpoint.
 
 Training writes the ignored local checkpoint:
 
